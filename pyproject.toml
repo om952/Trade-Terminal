@@ -1,0 +1,30 @@
+[project]
+name = "trade-terminal"
+version = "0.1.0"
+description = "Automated trading terminal: visual strategies, backtest, paper, live."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141",
+    "uvicorn>=0.52",
+    "httpx>=0.28",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "python-dotenv>=1.0",
+    "duckdb>=1.5",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "pyarrow>=20.0",
+    "websockets>=15.0",
+    "protobuf>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

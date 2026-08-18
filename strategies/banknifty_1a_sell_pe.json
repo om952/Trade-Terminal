@@ -1,0 +1,91 @@
+{
+  "name": "BankNifty 1A \u2014 Sell ATM PE on bullish cross",
+  "description": "9 EMA crosses above 50 SMA with RSI above 50 and rising. Sells the ATM put.",
+  "instrument": {
+    "symbol": "NSE_INDEX|Nifty Bank",
+    "segment": "index"
+  },
+  "timeframe": "5m",
+  "session": {
+    "start": "09:20",
+    "end": "15:05",
+    "square_off": "15:10"
+  },
+  "indicators": [
+    {
+      "id": "ema9",
+      "type": "EMA",
+      "params": {
+        "period": 9,
+        "source": "close"
+      }
+    },
+    {
+      "id": "sma50",
+      "type": "SMA",
+      "params": {
+        "period": 50,
+        "source": "close"
+      }
+    },
+    {
+      "id": "rsi",
+      "type": "RSI",
+      "params": {
+        "period": 14,
+        "source": "close"
+      }
+    }
+  ],
+  "entry": {
+    "op": "AND",
+    "conditions": [
+      {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "sma50"
+      },
+      {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 50
+      },
+      {
+        "left": "rsi",
+        "cmp": "rising",
+        "right": 0
+      }
+    ]
+  },
+  "exit": {
+    "op": "OR",
+    "conditions": [
+      {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "sma50"
+      }
+    ]
+  },
+  "legs": [
+    {
+      "id": "leg1",
+      "action": "SELL",
+      "kind": "option",
+      "lots": 1,
+      "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_monthly"
+      }
+    }
+  ],
+  "risk": {
+    "max_concurrent_positions": 1,
+    "re_entry": {
+      "enabled": true,
+      "max": 3,
+      "cooldown_bars": 3
+    }
+  }
+}

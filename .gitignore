@@ -1,0 +1,35 @@
+# Secrets — never commit. Broker credentials live here and nowhere else.
+.env
+.env.*
+!.env.example
+config/secrets.*
+*.pem
+*.key
+
+# Market data and journals — large, regenerable, and account-identifying
+data/parquet/
+data/journal/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS / editor
+.DS_Store
+*.swp
