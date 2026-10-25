@@ -297,7 +297,9 @@ def iter_underlyings(segment: str) -> Iterable[str]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    from backend.core.log_setup import configure_logging
+
+    configure_logging(console_format="%(levelname)s %(name)s: %(message)s", datefmt=None)
     n = sync()
     print(f"\n{n:,} instruments synced")
     print(f"NIFTY  -> {resolve('NIFTY')}")

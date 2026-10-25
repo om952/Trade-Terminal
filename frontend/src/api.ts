@@ -260,6 +260,19 @@ export interface SessionRow {
   errors?: string[];
 }
 
+export interface InterruptedSession {
+  session_id: string;
+  strategy_name: string;
+  symbol: string;
+  timeframe: string;
+  cause: "crash" | "app shutdown";
+  bars_seen: number;
+  trades: number;
+  open_legs: string[];
+  last_bar_at: string | null;
+  resume: LiveStartRequest;
+}
+
 export interface LiveStartRequest {
   strategy: unknown;
   symbol?: string;
@@ -378,6 +391,9 @@ export const api = {
 
   liveSessions: () =>
     request<{ active: SessionRow[]; history: SessionRow[] }>("/api/live/sessions"),
+
+  liveInterrupted: () =>
+    request<{ sessions: InterruptedSession[] }>("/api/live/interrupted"),
 
   liveSnapshot: (sessionId: string, includeBars = true) =>
     request<LiveSnapshot>(

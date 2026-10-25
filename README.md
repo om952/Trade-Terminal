@@ -142,6 +142,12 @@ trades and P&L exactly, with zero duplicate fills and zero replayed bars.
 A torn final line is the expected signature of a crash, not corruption; the
 reader takes the intact prefix and says so.
 
+Stopping the API server or pressing Ctrl-C ends running sessions as
+interrupted, not finished: positions are left as they are, and starting the
+same strategy again that day resumes it. The Live tab lists interrupted
+sessions with a Resume button; nothing resumes on its own. A Stop from the UI
+is a real end.
+
 
 ## Layout
 

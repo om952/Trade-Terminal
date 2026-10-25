@@ -460,3 +460,51 @@ def test_live_snapshot_falls_back_to_the_journal(client, seeded_dataset):
 
 def test_unknown_live_session_404s(client):
     assert client.get("/api/live/no-such-session").status_code == 404
+
+
+def test_api_shutdown_stops_sessions_resumably(seeded_dataset):
+    """Stopping the server must end running sessions as 'shutdown', so a restart
+    can offer to resume them, instead of abandoning them mid-write."""
+    import logging
+    import time as _time
+
+    from backend.core import log_setup
+    from backend.live import journal as J
+
+    document = TestClient(app).get("/api/templates/ema_crossover").json()
+    document["timeframe"] = "5m"
+    document["name"] = "shutdown hook test"  # own hash, so its own journal
+
+    try:
+        with TestClient(app) as lifespan_client:  # runs startup and shutdown
+            started = lifespan_client.post("/api/live/start", json={
+                "strategy": document, "symbol": seeded_dataset, "source": "replay",
+                "replay_start": "2026-01-05", "replay_end": "2026-02-28",
+                "replay_speed": 600, "alerts": False,
+                "starting_capital": 1_000_000, "lot_size": 250,
+            }).json()
+            session_id = started["session_id"]
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                snap = lifespan_client.get(
+                    f"/api/live/{session_id}", params={"include_bars": False}
+                ).json()
+                if snap.get("bars_seen", 0) >= 3:
+                    break
+                _time.sleep(0.1)
+            assert snap["running"], "session never got going"
+
+        state = J.recover(session_id)
+        assert state.ended and state.end_reason == "shutdown"
+        assert state.resumable
+    finally:
+        root = logging.getLogger()
+        for handler in list(root.handlers):
+            if isinstance(handler, log_setup._OurHandler):
+                root.removeHandler(handler)
+                handler.close()
+
+
+def test_live_interrupted_endpoint_shape(client):
+    body = client.get("/api/live/interrupted").json()
+    assert isinstance(body["sessions"], list)

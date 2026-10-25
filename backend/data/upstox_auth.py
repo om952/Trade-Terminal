@@ -31,6 +31,7 @@ from urllib.parse import urlencode
 import httpx
 
 from backend.core.config import IST, settings
+from backend.core.log_setup import configure_logging, register_secret
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ def exchange_code(code: str) -> dict:
 
 
 def _save_token(data: dict) -> None:
+    register_secret(data["access_token"])
     record = {
         "access_token": data["access_token"],
         "user_id": data.get("user_id"),
@@ -162,9 +164,9 @@ def load_token() -> str | None:
         return None
 
     env_token = settings.upstox_access_token.get_secret_value().strip()
-    if env_token:
-        return env_token
-    return json.loads(settings.token_path.read_text())["access_token"]
+    token = env_token or json.loads(settings.token_path.read_text())["access_token"]
+    register_secret(token)
+    return token
 
 
 def token_status() -> TokenStatus:
@@ -267,5 +269,5 @@ def _extract_code(raw: str, expected_state: str | None = None) -> str:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    configure_logging(console_format="%(levelname)s %(name)s: %(message)s", datefmt=None)
     interactive_login()

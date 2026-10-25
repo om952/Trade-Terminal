@@ -12,6 +12,7 @@ Run:
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from backend.analytics import metrics as M
 from backend.core.config import IST, settings
+from backend.core.log_setup import configure_logging
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
 from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
@@ -34,7 +36,29 @@ from backend.strategy.schema import Strategy
 
 log = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    configure_logging()
+    from backend.live.manager import manager
+
+    interrupted = manager.interrupted()
+    if interrupted:
+        # Never resumed automatically: the user may have closed the position by
+        # hand, or may not want the session back at all.
+        log.warning(
+            "%d paper session(s) were interrupted today and can be resumed from the "
+            "Live tab: %s",
+            len(interrupted), ", ".join(s["session_id"] for s in interrupted),
+        )
+    log.info("Trade Terminal API started (data dir %s)", settings.data_dir)
+    yield
+    log.info("Shutting down: stopping running sessions")
+    manager.stop_all("shutdown")
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Trade Terminal",
     description="Visual strategy definition, backtesting, paper trading and live execution.",
     version="0.5.0",
@@ -661,6 +685,7 @@ def live_start(req: LiveStartRequest) -> dict:
         warmup_bars=req.warmup_bars,
         mode=Mode.PAPER,
         alerts_enabled=req.alerts,
+        source_kind=req.source,
     )
 
     session, started = manager.start(
@@ -691,6 +716,14 @@ def live_sessions() -> dict:
     return {"active": manager.active(), "history": manager.history()}
 
 
+@app.get("/api/live/interrupted")
+def live_interrupted() -> dict:
+    """Sessions cut off by a crash or shutdown today, which the user may resume."""
+    from backend.live.manager import manager
+
+    return {"sessions": manager.interrupted()}
+
+
 @app.get("/api/live/{session_id}")
 def live_snapshot(session_id: str, include_bars: bool = True) -> dict:
     """Poll target for the dashboard."""
@@ -709,7 +742,7 @@ def live_snapshot(session_id: str, include_bars: bool = True) -> dict:
         raise HTTPException(404, f"No session {session_id}")
     return {
         "session_id": session_id,
-        "state": "ended" if state.ended else "interrupted",
+        "state": "interrupted" if state.resumable else "ended",
         "running": False,
         "from_journal": True,
         "strategy": {"name": state.strategy.get("name", "?"), "hash": state.strategy_hash},

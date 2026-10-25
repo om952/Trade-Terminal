@@ -371,7 +371,9 @@ def build_option_series(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    from backend.core.log_setup import configure_logging
+
+    configure_logging(console_format="%(levelname)s: %(message)s", datefmt=None, to_file=False)
     df = generate_ohlcv("NIFTY", date(2026, 1, 1), date(2026, 3, 31), "5m", seed=42)
     print(df.head())
     print(f"\n{len(df):,} bars  close {df['close'].iloc[0]:.2f} -> {df['close'].iloc[-1]:.2f}")

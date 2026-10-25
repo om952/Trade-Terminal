@@ -132,6 +132,48 @@ class SessionManager:
             )
         return out
 
+    def interrupted(self, day: date | None = None) -> list[dict[str, Any]]:
+        """Today's live-feed sessions that were cut off rather than stopped.
+
+        A crash leaves no end record; an app shutdown or Ctrl-C leaves one that
+        still counts as resumable. Either way the session is not running in this
+        process, and starting the same strategy on the same instrument today
+        lands on its journal and resumes it. Replays are not offered: re-running
+        one is a fresh experiment, not a position to look after.
+
+        This only lists them. Resuming is always the user's decision.
+        """
+        prefix = f"{(day or datetime.now(IST).date()):%Y%m%d}-"
+        out = []
+        for sid in J.sessions():
+            if not sid.startswith(prefix) or self.is_running(sid):
+                continue
+            state = J.recover(sid)
+            if not state.resumable or state.source_kind != "live":
+                continue
+            out.append(
+                {
+                    "session_id": sid,
+                    "strategy_name": state.strategy.get("name", "?"),
+                    "symbol": state.symbol,
+                    "timeframe": state.timeframe,
+                    "cause": "app shutdown" if state.ended else "crash",
+                    "bars_seen": state.bars_seen,
+                    "trades": len(state.trades),
+                    "open_legs": state.open_legs,
+                    "last_bar_at": state.last_bar_time.isoformat() if state.last_bar_time else None,
+                    # Everything the start endpoint needs to land on this journal.
+                    "resume": {
+                        "strategy": state.strategy,
+                        "symbol": state.symbol,
+                        "starting_capital": float(state.starting_capital),
+                        "lot_size": state.lot_size,
+                        "source": "live",
+                    },
+                }
+            )
+        return out
+
     def history(self, limit: int = 25) -> list[dict[str, Any]]:
         """Past sessions read off disk, including ones this process never ran."""
         out = []
@@ -145,7 +187,7 @@ class SessionManager:
                 {
                     "session_id": sid,
                     "running": False,
-                    "state": "ended" if state.ended else "interrupted",
+                    "state": "interrupted" if state.resumable else "ended",
                     "strategy": state.strategy.get("name", "?"),
                     "symbol": state.symbol,
                     "timeframe": state.timeframe,

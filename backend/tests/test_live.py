@@ -480,6 +480,60 @@ def test_gate_crash_midway_recovers_to_the_uninterrupted_result(frame, tmp_path)
         assert abs(got.net_pnl - want.net_pnl) < Decimal("0.01")
 
 
+def _stop_after(session: PaperSession, bars: int, reason: str) -> None:
+    """Make `session` call stop(reason) once it has processed `bars` bars."""
+    on_bar = session._on_bar
+
+    def wrapped(bar):
+        on_bar(bar)
+        if session.live.bars_seen >= bars:
+            session.stop(reason)
+
+    session._on_bar = wrapped
+
+
+def test_gate_shutdown_midway_resumes_to_the_uninterrupted_result(frame, tmp_path):
+    """An app shutdown (or Ctrl-C) mid-session must resume, not start over.
+
+    Shutdown writes an end record, unlike a crash. If recovery treated that as a
+    finished session, the restart would begin flat and forget the open position.
+    """
+    strategy = _strategy("ema_crossover")
+    reference = _backtest(strategy, frame)
+    split = len(frame) // 2
+
+    stopped = _paper(strategy, frame, tmp_path, session_id="shut")
+    _stop_after(stopped, split, "shutdown")
+    stopped.run()
+
+    state = J.recover("shut", tmp_path)
+    assert state.ended and state.end_reason == "shutdown"
+    assert state.resumable
+    assert stopped.live.bars_seen == split
+
+    resumed = _paper(strategy, frame.iloc[split:], tmp_path,
+                     warmup=frame.iloc[:split], session_id="shut")
+    resumed.run()
+
+    assert resumed.live.resumed, "a shutdown-ended session did not resume"
+    assert len(resumed.portfolio.closed_trades) == len(reference.trades)
+    assert abs(resumed.portfolio.realized_pnl - reference.portfolio.realized_pnl) < Decimal("0.01")
+    assert resumed.portfolio.fees_paid == reference.portfolio.fees_paid
+
+
+def test_manual_stop_is_final_and_keeps_its_reason(frame, tmp_path):
+    """A user's Stop is a real end: recorded as such, not flattened as 'exhausted'."""
+    strategy = _strategy("ema_crossover")
+    session = _paper(strategy, frame, tmp_path, session_id="manual")
+    _stop_after(session, len(frame) // 3, "manual")
+    session.run()
+
+    state = J.recover("manual", tmp_path)
+    assert state.end_reason == "manual"
+    assert not state.resumable
+    assert session.live.stop_reason == "manual"
+
+
 def test_gate_resume_warms_up_through_the_crash_point(frame, tmp_path):
     """A resumed session must be primed on every bar the crashed one processed.
 
@@ -792,3 +846,40 @@ def test_polling_source_does_not_repeat_bars_across_polls(monkeypatch):
     source = sources.RestPollingSource(SYMBOL, "5m", clock=lambda: now)
     assert len(list(source._emit_closed(candles, now))) == 3
     assert list(source._emit_closed(candles, now)) == []      # same poll again
+
+
+def test_manager_lists_only_resumable_live_sessions_from_today(tmp_path, monkeypatch):
+    """Crashed and shut-down live sessions are offered; stopped ones and replays are not."""
+    from backend.core.config import settings
+    from backend.live.manager import SessionManager
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    today = datetime.now(IST).date()
+    strategy = _strategy("ema_crossover")
+
+    def journal(sid: str, source_kind: str, end_reason: str | None) -> None:
+        with J.Journal(sid, settings.journal_dir) as j:
+            j.append(J.Event.SESSION_START, {
+                "strategy": strategy.model_dump(mode="json"), "strategy_hash": "h",
+                "symbol": SYMBOL, "timeframe": "5m", "source_kind": source_kind,
+                "starting_capital": "100000", "lot_size": 250,
+            })
+            if end_reason:
+                j.append(J.Event.SESSION_END, {"reason": end_reason})
+
+    p = f"{today:%Y%m%d}"
+    journal(f"{p}-crashed", "live", None)
+    journal(f"{p}-shutdown", "live", "shutdown")
+    journal(f"{p}-ctrlc", "live", "signal")
+    journal(f"{p}-manual", "live", "manual")
+    journal(f"{p}-replay", "replay", None)
+    journal(f"{today - timedelta(days=1):%Y%m%d}-yesterday", "live", None)
+
+    found = {s["session_id"]: s for s in SessionManager().interrupted()}
+
+    assert set(found) == {f"{p}-crashed", f"{p}-shutdown", f"{p}-ctrlc"}
+    assert found[f"{p}-crashed"]["cause"] == "crash"
+    assert found[f"{p}-shutdown"]["cause"] == "app shutdown"
+    resume = found[f"{p}-crashed"]["resume"]
+    assert resume["source"] == "live" and resume["symbol"] == SYMBOL
+    assert resume["strategy"]["name"] == strategy.name
