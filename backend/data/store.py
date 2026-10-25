@@ -290,9 +290,11 @@ def read_coverage(instrument_key: str, timeframe: str) -> dict:
 
 
 def all_coverage() -> pd.DataFrame:
-    return get_db().execute(
-        "SELECT * FROM coverage ORDER BY instrument_key, timeframe"
-    ).df()
+    # Built from rows rather than DuckDB's `.df()`, whose pandas conversion
+    # calls an API pandas 3 has deprecated.
+    cursor = get_db().execute("SELECT * FROM coverage ORDER BY instrument_key, timeframe")
+    columns = [d[0] for d in cursor.description]
+    return pd.DataFrame(cursor.fetchall(), columns=columns)
 
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:

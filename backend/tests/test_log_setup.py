@@ -97,3 +97,17 @@ def test_log_level_setting_is_honoured(monkeypatch):
             if isinstance(handler, log_setup._OurHandler):
                 root.removeHandler(handler)
                 handler.close()
+
+
+def test_world_readable_env_file_is_reported(tmp_path):
+    from backend.core.config import insecure_env_file_warning
+
+    env = tmp_path / ".env"
+    env.write_text("UPSTOX_API_SECRET=x\n")
+    env.chmod(0o644)
+    warning = insecure_env_file_warning(env)
+    assert warning and "chmod 600" in warning and "644" in warning
+
+    env.chmod(0o600)
+    assert insecure_env_file_warning(env) is None
+    assert insecure_env_file_warning(tmp_path / "missing.env") is None

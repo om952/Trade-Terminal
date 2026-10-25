@@ -110,5 +110,23 @@ class Settings(BaseSettings):
             d.mkdir(parents=True, exist_ok=True)
 
 
+def insecure_env_file_warning(env_file: Path | None = None) -> str | None:
+    """A warning if the .env file (broker credentials) is readable by other users.
+
+    Reported, not fixed: silently changing permissions on a user's file is worse
+    than telling them the one command that fixes it.
+    """
+    path = env_file if env_file is not None else ENV_FILE
+    if path is None or os.name != "posix" or not path.exists():
+        return None
+    mode = path.stat().st_mode & 0o777
+    if not mode & 0o077:
+        return None
+    return (
+        f"{path} is readable by other users (mode {mode:o}) and holds broker "
+        f"credentials. Fix it with: chmod 600 {path}"
+    )
+
+
 settings = Settings()
 settings.ensure_dirs()

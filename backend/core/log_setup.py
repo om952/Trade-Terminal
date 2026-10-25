@@ -18,7 +18,7 @@ import re
 import sys
 import threading
 
-from backend.core.config import settings
+from backend.core.config import insecure_env_file_warning, settings
 
 LOG_FILE_NAME = "trade-terminal.log"
 DEFAULT_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -141,3 +141,7 @@ def configure_logging(
     if resolved > logging.DEBUG:
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    # Every process starts here, so this is where start-up hygiene is reported.
+    if warning := insecure_env_file_warning():
+        logging.getLogger("backend.core.config").warning(warning)

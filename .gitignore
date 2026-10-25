@@ -29,6 +29,8 @@ venv/
 node_modules/
 dist/
 .vite/
+# tsc's incremental cache, rewritten by every build
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store
