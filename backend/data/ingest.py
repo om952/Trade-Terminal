@@ -20,7 +20,6 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 
-from backend.core.config import IST, settings
 from backend.core.log_setup import configure_logging
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps

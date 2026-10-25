@@ -22,7 +22,7 @@ from backend.analytics import metrics as M
 from backend.api.main import app
 from backend.data.simulator import generate_ohlcv
 from backend.data.store import write_candles
-from backend.execution.costs import Segment, segment_for
+from backend.execution.costs import segment_for
 from backend.strategy import templates
 from backend.strategy.risk import RiskGuard
 from backend.strategy.runner import FillModel, run_backtest

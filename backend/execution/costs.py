@@ -25,7 +25,7 @@ Sources: Union Budget 2026; NSE circulars; Upstox published charge sheet.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 

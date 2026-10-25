@@ -22,10 +22,13 @@ Original build plan: [Terminal Build Order](https://claude.ai/code/artifact/06d6
 ## Setup
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+uv sync --extra dev       # exact versions from uv.lock, into .venv
 cp .env.example .env      # then fill in UPSTOX_API_KEY / UPSTOX_API_SECRET
+chmod 600 .env            # it holds broker credentials
 ```
+
+Without uv: `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
+(this resolves the newest allowed versions rather than the locked ones).
 
 Create the Upstox app at <https://account.upstox.com/developer/apps>.
 Redirect URL must be `https://127.0.0.1:8000/auth/upstox/callback`.
@@ -204,8 +207,15 @@ cd frontend && npm run dev        # http://localhost:5173
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q
+.venv/bin/python -m pytest -q     # tests
+.venv/bin/ruff check backend      # lint
+.venv/bin/mypy                    # type check (see the baseline in pyproject.toml)
 ```
+
+CI (`.github/workflows/ci.yml`) runs these on Python 3.12 to 3.14, plus the
+frontend typecheck and build, `pip-audit` and `npm audit`, on every pull
+request and on `main`. After changing dependencies in `pyproject.toml`, run
+`uv lock` and commit `uv.lock`.
 
 No network or broker token required — the suite runs against the simulator.
 It uses a throwaway data directory and ignores your `.env`

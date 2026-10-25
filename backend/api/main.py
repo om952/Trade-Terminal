@@ -22,13 +22,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend import __version__
 from backend.analytics import metrics as M
 from backend.api.security import LocalOnlyMiddleware
 from backend.core.config import IST, settings
 from backend.core.log_setup import configure_logging
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
-from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
+from backend.data.store import all_coverage, read_candles, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
 from backend.strategy import templates
@@ -62,7 +63,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="Trade Terminal",
     description="Visual strategy definition, backtesting, paper trading and live execution.",
-    version="0.5.0",
+    version=__version__,
 )
 
 # The Vite dev server runs on a different port; in production the frontend is

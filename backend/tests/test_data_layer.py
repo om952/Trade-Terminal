@@ -8,7 +8,7 @@ detected rather than ignored, and the simulator is reproducible.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import pandas as pd
 import pytest

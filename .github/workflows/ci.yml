@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      - name: Install from the lockfile
+        run: uv sync --locked --extra dev
+
+      - name: Lint
+        run: uv run --frozen ruff check backend
+
+      - name: Type check
+        run: uv run --frozen mypy
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+      # The suite runs against a throwaway data dir (backend/tests/conftest.py).
+      # If it ever writes into the repo's data/ folder again, fail loudly.
+      - name: Tests left data/ untouched
+        run: test ! -e data || { echo "::error::the test suite wrote into data/"; exit 1; }
+
+      - name: Dependency audit
+        if: matrix.python == '3.13'
+        run: uv run --frozen pip-audit --skip-editable
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high

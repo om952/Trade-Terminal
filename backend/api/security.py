@@ -34,7 +34,9 @@ def _hostname(value: str) -> str | None:
 
 
 def is_local_host(host_header: str | None) -> bool:
-    return bool(host_header) and _hostname(host_header.strip()) in LOCAL_HOSTNAMES
+    if not host_header:
+        return False
+    return _hostname(host_header.strip()) in LOCAL_HOSTNAMES
 
 
 def is_local_origin(origin: str | None) -> bool:
@@ -73,9 +75,8 @@ class LocalOnlyMiddleware:
             await send({"type": "websocket.close", "code": 1008})
             return
 
-        body = json.dumps(
-            {"detail": f"Rejected: {problem} is not local. Trade Terminal only serves this machine."}
-        ).encode()
+        detail = f"Rejected: {problem} is not local. Trade Terminal only serves this machine."
+        body = json.dumps({"detail": detail}).encode()
         await send({
             "type": "http.response.start",
             "status": 403,

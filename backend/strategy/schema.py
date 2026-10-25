@@ -21,7 +21,7 @@ import json
 import re
 from datetime import time
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 

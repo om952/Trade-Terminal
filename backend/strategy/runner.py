@@ -30,7 +30,6 @@ from backend.execution.costs import CostBreakdown, Segment, compute_costs, segme
 from backend.indicators.base import PriceBar
 from backend.strategy.option_book import MIN_TRADEABLE_PREMIUM, OptionBook
 from backend.strategy.engine import (
-    BarEvent,
     EngineResult,
     OrderIntent,
     StrategyEngine,

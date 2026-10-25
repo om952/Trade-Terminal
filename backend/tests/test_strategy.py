@@ -6,7 +6,7 @@ Everything else guards the invariants those two depend on.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd

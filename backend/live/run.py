@@ -19,10 +19,10 @@ import json
 import logging
 import signal
 import sys
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
-from backend.core.config import IST, Mode, settings
+from backend.core.config import IST, Mode
 from backend.core.log_setup import configure_logging
 from backend.live import journal as J
 from backend.live.session import PaperSession, SessionConfig

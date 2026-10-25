@@ -30,7 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Callable, Iterator
+from typing import Iterator
 
 import pandas as pd
 
@@ -439,7 +439,7 @@ class StrategyEngine:
         indicators: IndicatorSet | None = None,
     ) -> ClosedTrade | None:
         """Book a fill against the portfolio. Returns a ClosedTrade if it closed one."""
-        leg = next(l for l in self.strategy.legs if l.id == intent.leg_id)
+        leg = next(candidate for candidate in self.strategy.legs if candidate.id == intent.leg_id)
         position = self.portfolio.position(intent.leg_id, intent.symbol, self.lot_size)
 
         was_open = position.is_open
