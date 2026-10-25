@@ -74,6 +74,10 @@ Findings 1 to 14 come from the Oct 1 audit and were re-checked on a fresh clone;
 | 19 | **Misspelled inline-indicator params pass validation.** `{"type":"sma","lenght":20}` validates and gets a content hash, then fails with `TypeError` at backtest time. `InlineIndicator` uses `extra="allow"` (`backend/strategy/schema.py:145`). This would let LLM errors slip past the repair loop | High for the agent | P0.9 |
 | 20 | **The current schema can't be used directly for LLM structured output.** `ConditionGroup` is recursive and `InlineIndicator` allows extra keys; Claude's structured outputs support neither recursive schemas nor `additionalProperties` other than `false` | Design constraint | P2.2 |
 | 21 | `frontend/tsconfig.tsbuildinfo` is tracked, so every build dirties the tree; ruff reports 92 issues under default rules | Low | P0.6 |
+| 22 | *Found during Phase 0:* `read_coverage` crashed on fresh installs: duckdb needs `pytz` for timezone-aware timestamps and it wasn't a dependency | High | P0.2 ✅ |
+| 23 | *Found during Phase 0:* stopping a session also stopped its source, so the stop reason was lost, the journal said "feed_exhausted", and open positions were flattened on a manual Stop | High | P0.4 ✅ |
+| 24 | *Found during Phase 0:* a session ended by Ctrl-C (or, once added, an app shutdown) was treated as finished, so restarting started flat instead of resuming | High | P0.4 ✅ |
+| 25 | *Found during Phase 0:* Telegram send failures logged the httpx error, which contains the bot-token URL; exit alerts had a bare `&` that Telegram's HTML mode rejects | Medium | P0.3, P0.7 ✅ |
 
 ---
 
@@ -272,6 +276,8 @@ Roughly **10 to 13 weeks to M1** and **14 to 19 weeks to M2**.
 ## 7. Phases in detail
 
 ### Phase 0: Stabilise (about 1.5 weeks)
+
+**Status 2026-10-25: P0.1 to P0.9 done; P0.10 researched, with three first-party answers still needed** (see `docs/decisions/0001-phase0-research-spikes.md`). Gate results: a fresh clone installs with the documented command (and from `uv.lock`); 403 tests pass and `data/` is never created; ruff, mypy, `pip-audit` and `npm audit` are clean; `uvicorn` shows application `INFO` lines with secrets redacted; shutdown and Ctrl-C leave sessions resumable. Not yet verified: CI on GitHub, which first runs when a pull request is opened or `main` is pushed.
 
 - **P0.1 Isolate tests.** `backend/tests/conftest.py` points `DATA_DIR` at a temp folder before `backend.core.config` is imported, with a guard that fails the run if the data dir is the repo's `data/`. Ship a small instrument-master fixture so instrument tests (finding 16) don't need a broker sync. Drop the README's "stop the server before testing" rule.
 - **P0.2 Atomic, locked candle writes.** Write to a temp file and `os.replace`; take a per-instrument lock around read-merge-write. The same primitive is reused for promoting scratch data in P1.4.
