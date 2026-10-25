@@ -3,7 +3,8 @@
 Automated trading terminal for Indian markets: visual strategy definition, backtesting,
 paper trading, and live broker execution — all running the same engine.
 
-Build plan and architecture: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
+Implementation plan to production: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+Original build plan: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
 
 ## Status
 
