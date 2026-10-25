@@ -118,11 +118,15 @@ def sync(exchange: Exchange = "complete") -> int:
     source of truth, and a stale contract lingering in our table would be a
     silent source of orders against instruments that no longer trade.
     """
-    from backend.data.store import get_db
-
     instruments = download(exchange)
     if not instruments:
         raise RuntimeError(f"Instrument master for {exchange} came back empty")
+    return replace_all(instruments)
+
+
+def replace_all(instruments: list[Instrument]) -> int:
+    """Persist a full contract list, replacing whatever was stored."""
+    from backend.data.store import get_db
 
     rows = [
         (

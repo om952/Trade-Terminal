@@ -125,7 +125,7 @@ An **app session** runs from the moment the trader opens Trade Terminal until th
 **What "quitting the app" means.** Trade Terminal is a local server plus a UI, so closing a browser tab isn't the same as quitting. The session ends when either of these happens:
 
 - **The trader quits explicitly:** a *Quit* button in the UI now, and closing the window once the desktop wrapper ships (P4.4). This is the normal path, and it shows the Keep/Discard dialog.
-- **The trader has gone offline:** no UI tab has been connected for 30 minutes (configurable, or "never") and no paper session is running. This matches "as long as the user is online". Their remembered preference is applied; with no remembered preference, the data is held and they're asked at next launch.
+- **The trader has gone offline:** no UI tab has been connected for 30 minutes and no paper session is running (decided 2026-10-25). This matches "as long as the user is online". Their remembered preference is applied; with no remembered preference, the data is held and they're asked at next launch.
 
 If a paper session is running, quitting warns that it will stop the session (P0.4).
 
@@ -165,7 +165,7 @@ Conversations aren't market data, and they're kept permanently whatever the data
 - **Continuing an old conversation:** the trader can reopen a past chat and keep refining. If its graph checkpoint still exists, it resumes exactly where it paused; if not, a new graph thread starts from the conversation's latest strategy version, with the old messages shown above.
 - **Re-running when the data was discarded:** results stay viewable (metrics, trades and charts are stored with the run). A re-run downloads the data again and checks the fingerprint (§4.5).
 - **Trader control:** rename, delete, or export a conversation (Markdown or JSON, with its strategy specs). Deleting a conversation never deletes strategies saved to the library.
-- **Storage:** messages live in SQLite for display and search. LangGraph checkpoints are stored separately and can be pruned for old conversations (for example after 90 days) without losing the readable history.
+- **Storage:** messages live in SQLite for display and search. LangGraph checkpoints are stored separately and are pruned after 15 days, so a conversation can be resumed exactly where it paused for 15 days; after that, continuing it starts a new graph thread from its latest strategy version. The readable history is kept forever (decided 2026-10-25).
 
 ### 4.5 Rules that apply in every mode
 
@@ -406,13 +406,14 @@ Don't start until a beta trader has confirmed what "screener" means.
 
 Recommended options are listed first.
 
+Already decided (2026-10-25): an app session ends on Quit or after 30 minutes with no UI connected and no paper session; the default preference is *Ask every time* with a *Remember my preference* checkbox; resumable conversation checkpoints are kept 15 days and readable chats forever.
+
+
 1. **Distribution:** a local-first app each trader installs (recommended; keeps their data and broker keys on their machine and keeps the regulatory picture simplest), or a hosted multi-user service (needs auth, per-user broker routing, and very likely algo-provider obligations).
 2. **"Production-ready" target:** M2 (recommended) or M4.
-3. **Closing the browser tab:** end the session after 30 minutes with no UI connected and no paper session (recommended, §4.1), end it immediately, or never (only an explicit Quit ends it).
-4. **Conversation checkpoint pruning:** keep resumable checkpoints for 90 days (recommended; the readable history is kept forever) or forever.
-5. **LLM billing for beta:** bring your own key (recommended) or a bundled key.
-6. **Upstox Plus** for expired option data: decided by the P0.10 spike.
-7. **Hours per week:** all estimates assume the earlier plans' part-time pace.
+3. **LLM billing for beta:** bring your own key (recommended) or a bundled key.
+4. **Upstox Plus** for expired option data: decided by the P0.10 spike.
+5. **Hours per week:** all estimates assume the earlier plans' part-time pace.
 
 ---
 

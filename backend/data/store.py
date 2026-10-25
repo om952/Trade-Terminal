@@ -80,13 +80,13 @@ def get_db() -> duckdb.DuckDBPyConnection:
             try:
                 _db = duckdb.connect(str(settings.db_path))
             except duckdb.IOException as exc:
-                # DuckDB permits a single writer process. Running the test suite
+                # DuckDB permits a single writer process. Running a data CLI
                 # while the API server is up produces a lock error that surfaces
-                # as a baffling fixture failure several layers up, so name it here.
+                # several layers up, so name it here.
                 raise RuntimeError(
                     f"Cannot open {settings.db_path}: another process holds it.\n"
                     f"DuckDB allows only one writer at a time — stop the API server "
-                    f"before running the tests, or vice versa:\n"
+                    f"before running a data command, or vice versa:\n"
                     f"    pkill -f 'uvicorn backend.api.main'\n"
                     f"Original error: {exc}"
                 ) from exc

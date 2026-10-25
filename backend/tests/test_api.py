@@ -91,10 +91,12 @@ def test_unknown_template_404s(client):
     assert client.get("/api/templates/does_not_exist").status_code == 404
 
 
-def test_instrument_search_ranks_exact_match_first(client):
+def test_instrument_search_ranks_exact_match_first(client, instrument_master):
     results = client.get("/api/instruments/search", params={"q": "RELIANCE"}).json()["results"]
     assert results, "instrument master not synced"
     assert results[0]["trading_symbol"] == "RELIANCE"
+    assert results[0]["exchange"] == "NSE"
+    assert results[0]["instrument_type"] == "EQ"
 
 
 def test_datasets_lists_stored_data(client, seeded_dataset):

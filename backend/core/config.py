@@ -6,6 +6,7 @@ That way there is exactly one place to look when something is misconfigured.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +17,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT = Path(__file__).resolve().parents[2]
 IST = ZoneInfo("Asia/Kolkata")
 
+# Which .env to read. Unset means the repo's .env; an empty string means none at
+# all, which is how the test suite keeps a developer's real secrets and risk
+# limits out of its runs.
+_env_override = os.environ.get("TRADE_TERMINAL_ENV_FILE")
+ENV_FILE: Path | None = (
+    ROOT / ".env" if _env_override is None else (Path(_env_override) if _env_override else None)
+)
+
 
 class Mode(str, Enum):
     BACKTEST = "backtest"
@@ -25,7 +34,7 @@ class Mode(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=ROOT / ".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )

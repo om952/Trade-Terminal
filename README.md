@@ -198,13 +198,9 @@ cd frontend && npm run dev        # http://localhost:5173
 ```
 
 No network or broker token required — the suite runs against the simulator.
-
-**Stop the API server first.** DuckDB permits a single writer process, so the
-suite cannot open the database while uvicorn holds it:
-
-```bash
-pkill -f 'uvicorn backend.api.main'
-```
+It uses a throwaway data directory and ignores your `.env`
+(`backend/tests/conftest.py`), so it never touches `data/` and can run while the
+API server is up.
 
 ## Regulatory
 
