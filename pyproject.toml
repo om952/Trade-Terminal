@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.15",
     "python-dotenv>=1.0",
     "duckdb>=1.5",
+    "pytz",  # duckdb needs it to return TIMESTAMPTZ values as Python datetimes
     "pandas>=2.2",
     "numpy>=2.0",
     "pyarrow>=20.0",

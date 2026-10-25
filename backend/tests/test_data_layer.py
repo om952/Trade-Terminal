@@ -338,3 +338,43 @@ def test_store_date_range_filter(temp_store):
 
 def test_store_unknown_instrument_returns_empty(temp_store):
     assert temp_store.read_candles("NOPE|NOPE", "1d").empty
+
+
+def test_store_crash_mid_write_keeps_old_file(temp_store, monkeypatch):
+    """A write that dies halfway must leave the previous file intact and no debris."""
+    jan = generate_ohlcv("NIFTY", date(2026, 1, 1), date(2026, 1, 31), "1d", seed=2)
+    feb = generate_ohlcv("NIFTY", date(2026, 2, 1), date(2026, 2, 28), "1d", seed=3)
+    temp_store.write_candles("TEST|CRASH", "1d", jan)
+    path = temp_store.candle_path("TEST|CRASH", "1d")
+    before = path.read_bytes()
+
+    real_to_parquet = pd.DataFrame.to_parquet
+
+    def dying_to_parquet(self, target, *args, **kwargs):
+        real_to_parquet(self.iloc[:1], target, *args, **kwargs)  # partial file on disk
+        raise OSError("simulated crash mid-write")
+
+    with monkeypatch.context() as m:
+        m.setattr(pd.DataFrame, "to_parquet", dying_to_parquet)
+        with pytest.raises(OSError, match="simulated crash"):
+            temp_store.write_candles("TEST|CRASH", "1d", feb)
+
+    assert path.read_bytes() == before
+    assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")] == []
+    assert len(temp_store.read_candles("TEST|CRASH", "1d")) == len(jan)
+
+
+def test_store_concurrent_writes_lose_nothing(temp_store):
+    """Threads merging different months into one file must not drop each other's bars."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    months = [
+        generate_ohlcv("NIFTY", date(2026, m, 1), date(2026, m, 28), "1d", seed=m)
+        for m in range(1, 9)
+    ]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda df: temp_store.write_candles("TEST|CONC", "1d", df), months))
+
+    back = temp_store.read_candles("TEST|CONC", "1d")
+    assert len(back) == sum(len(m) for m in months)
+    assert temp_store.read_coverage("TEST|CONC", "1d")["bar_count"] == len(back)

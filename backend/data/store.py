@@ -13,13 +13,23 @@ to delete, not a surgical DELETE against a giant table.
 Writes are idempotent. Re-fetching a range you already have produces a
 byte-identical file, which is what makes the Phase 1 reproducibility gate
 meaningful.
+
+Writes are also atomic and serialized. The merged file is written beside the
+live one and swapped in with `os.replace`, so a crash mid-write leaves the old
+file intact rather than a truncated one. A per-instrument lock makes the
+read-merge-write a single step within the process, and opening DuckDB first
+keeps a second process (which DuckDB refuses as a second writer) from touching
+the files at all.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
+import uuid
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -34,6 +44,9 @@ CANDLE_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "oi"]
 
 _db: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
+
+_file_locks: dict[tuple[str, str], threading.Lock] = {}
+_file_locks_guard = threading.Lock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS instruments (
@@ -147,6 +160,34 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+@contextmanager
+def _candle_lock(instrument_key: str, timeframe: str):
+    with _file_locks_guard:
+        lock = _file_locks.setdefault((instrument_key, timeframe), threading.Lock())
+    with lock:
+        yield
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write `df` to `path` so that readers only ever see the old or the new file."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        df.to_parquet(tmp, index=False, compression="snappy")
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    if os.name == "posix":
+        # Make the rename itself durable, not just the file contents.
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
 def write_candles(
     instrument_key: str,
     timeframe: str,
@@ -161,19 +202,25 @@ def write_candles(
         return read_coverage(instrument_key, timeframe).get("bar_count", 0)
 
     incoming = _normalize(df)
-    path = candle_path(instrument_key, timeframe)
+    get_db()  # claim the data dir before touching any file (single-writer guard)
 
-    if path.exists():
-        existing = pd.read_parquet(path)
-        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True).dt.tz_convert(IST)
-        combined = pd.concat([existing, incoming], ignore_index=True)
-        combined = combined.sort_values("timestamp", kind="stable")
-        combined = combined.drop_duplicates(subset="timestamp", keep="last").reset_index(drop=True)
-    else:
-        combined = incoming
+    with _candle_lock(instrument_key, timeframe):
+        path = candle_path(instrument_key, timeframe)
+        if path.exists():
+            existing = pd.read_parquet(path)
+            existing["timestamp"] = (
+                pd.to_datetime(existing["timestamp"], utc=True).dt.tz_convert(IST)
+            )
+            combined = pd.concat([existing, incoming], ignore_index=True)
+            combined = combined.sort_values("timestamp", kind="stable")
+            combined = (
+                combined.drop_duplicates(subset="timestamp", keep="last").reset_index(drop=True)
+            )
+        else:
+            combined = incoming
 
-    combined.to_parquet(path, index=False, compression="snappy")
-    _update_coverage(instrument_key, timeframe, combined, source)
+        _atomic_write_parquet(combined, path)
+        _update_coverage(instrument_key, timeframe, combined, source)
     return len(combined)
 
 
@@ -249,12 +296,13 @@ def all_coverage() -> pd.DataFrame:
 
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:
-    path = candle_path(instrument_key, timeframe)
-    path.unlink(missing_ok=True)
-    get_db().execute(
-        "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
-        [instrument_key, timeframe],
-    )
+    db = get_db()
+    with _candle_lock(instrument_key, timeframe):
+        candle_path(instrument_key, timeframe).unlink(missing_ok=True)
+        db.execute(
+            "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
+            [instrument_key, timeframe],
+        )
 
 
 def stored_instruments(timeframe: str | None = None) -> list[tuple[str, str]]:
