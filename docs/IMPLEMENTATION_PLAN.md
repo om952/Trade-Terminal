@@ -16,7 +16,8 @@ A trader installs Trade Terminal on their own machine and can, without writing J
 4. **Understand** it: a report, plus a plain-English explanation built only from the computed numbers.
 5. **Refine** it in conversation ("tighten the stop to 0.5%", "only trade after 9:30"). Every change becomes a new version.
 6. **Apply** it: one click starts paper trading. Live trading comes last, behind its own gates (Phase 7).
-7. **Decide what happens to the data.** When the session ends, the downloaded market data is either discarded or kept on the machine. The trader chooses.
+7. **Decide what happens to the data.** Market data downloaded while the app is open is cached for that whole app session, across every strategy. When the trader quits, it's discarded or kept on the machine; the trader chooses, and can tick *Remember my preference*.
+8. **Come back later.** Conversations, strategies and results are saved permanently, so the trader can reopen any past chat and its strategies, whatever happened to the market data.
 
 Everything else in the product (templates, the visual builder, the strategy library, alerts, the data manager, later the screener and research agent) serves that loop.
 
@@ -101,9 +102,10 @@ Findings 1 to 14 come from the Oct 1 audit and were re-checked on a fresh clone;
        └───────►│ schema · StrategyEngine · runner · costs · risk│
                 └───────────────────────────────────────────────┘
 Storage:
-  SQLite (WAL)  app state: strategies, versions, workspaces, runs, jobs,
+  SQLite (WAL)  app state: strategies, versions, conversations, messages, runs,
+                jobs, app sessions, preferences,
                 LLM call log, LangGraph checkpoints, cache index
-  Parquet       market data: kept store + per-workspace scratch
+  Parquet       market data: kept library + one scratch cache per app session
   DuckDB        in-process analytics over Parquet (no longer the app-state writer)
   JSONL         paper/live journals (unchanged)
 ```
@@ -112,55 +114,71 @@ Storage:
 
 ---
 
-## 4. Session-scoped data cache and retention
+## 4. Session-scoped data cache, retention and history
 
-This section designs your idea: download data only when it's needed, keep it for the session, and let the user decide at the end whether it's discarded or kept.
+Download market data only when it's needed, keep it cached while the trader is using the app, and let them decide when they quit whether it's discarded or kept. Conversations and strategies are always saved.
 
 ### 4.1 What a "session" is
 
-A **workspace** is one working session in the Studio: a strategy conversation with all its backtests and refinements, plus any paper session started from it. Data retention is tied to the workspace, **not to each individual backtest**.
+An **app session** runs from the moment the trader opens Trade Terminal until they quit it. Everything downloaded in that time goes into one shared session cache, whichever strategy or conversation needed it. If a trader works on three strategies that need NIFTY 5m, BANKNIFTY 1m and RELIANCE daily, all three datasets stay cached until they quit, and every re-run and refinement reads from the cache with no new downloads.
 
-Why not per backtest: refinement is the core loop. A trader who changes the stop and re-runs ten times would re-download the same year of 1-minute data ten times, against Upstox's 2,000-requests-per-30-minutes limit. Tying data to the workspace gives "the data goes away when I'm done" without making iteration slow.
+**What "quitting the app" means.** Trade Terminal is a local server plus a UI, so closing a browser tab isn't the same as quitting. The session ends when either of these happens:
 
-A workspace ends when the user closes it, when the paper session started from it stops and the workspace is already closed, or at app shutdown (configurable).
+- **The trader quits explicitly:** a *Quit* button in the UI now, and closing the window once the desktop wrapper ships (P4.4). This is the normal path, and it shows the Keep/Discard dialog.
+- **The trader has gone offline:** no UI tab has been connected for 30 minutes (configurable, or "never") and no paper session is running. This matches "as long as the user is online". Their remembered preference is applied; with no remembered preference, the data is held and they're asked at next launch.
 
-### 4.2 Retention modes (user setting, overridable per workspace)
+If a paper session is running, quitting warns that it will stop the session (P0.4).
 
-| Mode | What happens at workspace end | Default? |
-|---|---|---|
-| **Ask** | A dialog shows what was downloaded ("BANKNIFTY 1m, Jan to Oct 2026, 48 MB"), with *Keep on this machine* / *Discard*, and *Remember my choice* | **Yes** |
-| **Keep** | Workspace data is merged into the local library and reused by future workspaces | |
-| **Discard** | Workspace data is deleted | |
+### 4.2 The quit dialog and preferences
 
-The data manager page shows the size of the kept library per instrument, lets the user delete any of it, and offers an optional size cap (least-recently-used data is evicted first).
+At quit, a dialog lists what was downloaded this session, for example "NIFTY 5m (Jan–Oct 2026), BANKNIFTY 1m (Jun–Oct 2026): 61 MB", with two buttons, **Keep on this machine** and **Discard**, and a **Remember my preference** checkbox.
+
+| Preference | What happens at quit |
+|---|---|
+| **Ask every time** (default) | The dialog above |
+| **Always keep** | Session data joins the local library and is reused next time; no dialog |
+| **Always discard** | Session data is deleted; no dialog |
+
+Ticking the checkbox saves the choice as *Always keep* or *Always discard*. The trader can change it any time in Settings. The Data Manager page shows the size of the kept library per instrument, lets the trader delete any of it, and offers an optional size cap (least-recently-used data is evicted first). A status-bar indicator shows the current session cache size.
 
 ### 4.3 How it works
 
 Two physical stores:
 
 ```
-data/store/      kept library   (permanent, shared across workspaces)
-data/scratch/<workspace_id>/    session data (deleted or promoted at workspace end)
+data/store/                       kept library (permanent)
+data/scratch/<app_session_id>/    this app session's cache (deleted or promoted at quit)
 ```
 
-- `get_bars(instrument, timeframe, start, end, workspace)` reads the kept library first, then the workspace's scratch, then downloads only the missing trading sessions, written into **scratch** (or straight into the library when the mode is Keep).
-- **Discard** is `rm -rf data/scratch/<workspace_id>`: simple, complete and easy to verify. That matters if "the data goes away" is a privacy promise.
-- **Keep** promotes scratch into the library with the same atomic, locked merge as P0.2, then deletes scratch.
-- **Crash safety:** on startup, scratch folders whose workspace is no longer open are listed. In Ask mode the user is prompted; otherwise the workspace's mode is applied.
-- Two workspaces don't share scratch. A rare duplicate download is the price of the simplest correct design.
+- `get_bars(instrument, timeframe, start, end)` reads the kept library first, then the current session's scratch, then downloads only the missing trading sessions into scratch. With *Always keep* set, it writes straight into the library and nothing needs promoting at quit.
+- **Discard** is `rm -rf data/scratch/<app_session_id>`: simple, complete and easy to verify. That matters if "the data goes away" is a privacy promise.
+- **Keep** promotes scratch into the library with the same atomic, locked merge as P0.2, with a progress bar, then deletes scratch. If promotion is interrupted, scratch is left intact and promotion resumes at next launch, so nothing is lost or half-written.
+- **Unclean exits** (crash, power loss, laptop lid, `kill -9`) can't show a dialog. At next launch, any leftover scratch folder is handled by the remembered preference, or, with *Ask every time*, a prompt: "Data from your last session (61 MB) wasn't saved or discarded. Keep or discard?"
+- **Long sessions:** a trader who leaves the app open for days keeps one growing cache. The size cap (if set) evicts least-recently-used session data during the session, and the status-bar indicator keeps the size visible.
 
-### 4.4 Rules that apply in every mode
+### 4.4 Conversation history (always saved)
+
+Conversations aren't market data, and they're kept permanently whatever the data preference:
+
+- **What's saved:** every conversation's messages, the clarifying questions and answers, the assumptions, every strategy version it produced (linked by content hash), and every run started from it (linked by run ID).
+- **History sidebar:** a list of past conversations with title, date, instrument and latest result, plus search. Opening one shows the full chat, the strategy versions and their results.
+- **Continuing an old conversation:** the trader can reopen a past chat and keep refining. If its graph checkpoint still exists, it resumes exactly where it paused; if not, a new graph thread starts from the conversation's latest strategy version, with the old messages shown above.
+- **Re-running when the data was discarded:** results stay viewable (metrics, trades and charts are stored with the run). A re-run downloads the data again and checks the fingerprint (§4.5).
+- **Trader control:** rename, delete, or export a conversation (Markdown or JSON, with its strategy specs). Deleting a conversation never deletes strategies saved to the library.
+- **Storage:** messages live in SQLite for display and search. LangGraph checkpoints are stored separately and can be pruned for old conversations (for example after 90 days) without losing the readable history.
+
+### 4.5 Rules that apply in every mode
 
 - **Download only base timeframes:** 1-minute (intraday) or daily. 3m, 5m, 15m and 1h are derived locally, bucketed from 09:15. A parity test checks that derived 5m equals Upstox's native 5m on stored data.
 - **Fetch only what's missing,** merged into a few ranges. Past sessions are immutable once fetched; only the last few days are re-checked. Sessions with no data (holidays, pre-listing) are remembered so they aren't re-requested.
 - **Before a run, show a data plan:** what will be downloaded, roughly how big, and an ETA under rate limits. Downloads run as a job with progress and cancel.
 - **Results never depend on the data still existing.** Every run stores a data fingerprint (instrument, range, row count, content hash). Re-running a strategy whose data was discarded re-downloads it and checks the fingerprint. A mismatch (for example, Upstox revised a candle) is shown, not hidden.
-- **Not subject to retention:** the instrument master (small reference data, needed for search), your strategies, run results, and journals. Journals are your trade record and are needed for crash recovery. In Discard mode, a journal's bar events can be stripped after the session ends, keeping orders, fills and P&L.
+- **Not subject to retention:** the instrument master (small reference data, needed for search), conversations, strategies, run results, and journals. Journals are the trade record and are needed for crash recovery. When session data is discarded, a journal's bar events can be stripped, keeping orders, fills and P&L.
 - **Simulated data** follows the same rules; it's regenerable from its seed.
 
-### 4.5 Open question that gates the Keep mode
+### 4.6 Open question that gates the Keep option
 
-Do Upstox's API terms limit how long market data may be stored locally? This is desk research (P0.10) and decides whether Keep can ship as designed. If storage is restricted, Discard becomes the only mode, or Keep gets a time limit. Session mode works either way.
+Do Upstox's API terms limit how long market data may be stored locally? This is desk research (P0.10) and decides whether *Keep* can ship as designed. If storage is restricted, discard-at-quit becomes the only behaviour, or kept data gets a time limit. The session cache works either way.
 
 ---
 
@@ -273,14 +291,14 @@ Roughly **10 to 13 weeks to M1** and **14 to 19 weeks to M2**.
 
 ### Phase 1: Platform foundation (3 to 4 weeks)
 
-- **P1.1 App database.** SQLite in WAL mode with versioned migrations. Tables: `strategies`, `strategy_versions` (content hash, parent hash, spec JSON, provenance), `workspaces` (status, retention mode), `runs` (strategy hash, kind, params, data fingerprint, metrics, status), `jobs`, `llm_calls`, `data_coverage`, `cache_index`, plus LangGraph checkpoint tables. Coverage metadata moves from DuckDB to SQLite; DuckDB becomes an in-process, read-mostly analytics engine over Parquet, which removes the single-writer conflict.
+- **P1.1 App database.** SQLite in WAL mode with versioned migrations. Tables: `strategies`, `strategy_versions` (content hash, parent hash, spec JSON, provenance), `app_sessions` (started, ended, how it ended, scratch size, outcome), `preferences` (retention preference, idle timeout), `conversations` and `messages` (permanent history, full-text search), `runs` (strategy hash, kind, params, data fingerprint, metrics, status), `jobs`, `llm_calls`, `data_coverage`, `cache_index`, plus LangGraph checkpoint tables. Coverage metadata moves from DuckDB to SQLite; DuckDB becomes an in-process, read-mostly analytics engine over Parquet, which removes the single-writer conflict.
 - **P1.2 Job runner.** Background jobs for fetch, backtest and (later) sweeps and scans: job ID, progress, ETA, cancel, result pointer. Progress streams to the UI over SSE. Long work leaves the request threads (finding 6). The MCP server in Phase 5 reuses it.
 - **P1.3 Data service.** `get_bars()` as the single entry point, per §4.4: base-timeframe downloads only, local derivation, gap-aware fetch, holiday memory, data plan with size and ETA, fingerprints. Parquet partitioned by instrument, base timeframe and month (sized for the option-contract volume P4.3 may bring). Migrate existing per-timeframe files.
-- **P1.4 Session cache and retention.** The two-store design in §4.3: scratch per workspace, the Ask/Keep/Discard modes, promotion, the startup sweep, the journal compaction option. Tests: Discard leaves no file behind; Keep promotion is atomic under a simulated crash; a re-run after Discard reproduces the same fingerprint.
+- **P1.4 Session cache and retention.** The design in §4.1 to §4.3: one scratch cache per app session, shared by every conversation; the quit endpoint and the idle-offline rule (no UI connected for 30 minutes and no paper session); the three preferences (Ask every time, Always keep, Always discard); promotion with resume; the startup prompt for leftover scratch after an unclean exit; the in-session size cap; the journal compaction option. Tests: discard leaves no file behind; promotion is atomic and resumes after a simulated crash; a `kill -9` mid-session leads to the startup prompt; a re-run after discard reproduces the same fingerprint; two conversations in one session share cached data with zero duplicate downloads.
 - **P1.5 Strategy library and run history.** CRUD with version history (content hash, parent, provenance), templates imported as read-only library entries, a run history per strategy, and a **trial counter** per strategy family (every backtest recorded, so deflated Sharpe is possible in Phase 6).
 - **P1.6 API restructure.** Split the 724-line `main.py` into routers; a consistent error model; generate a typed TypeScript client from OpenAPI so the UI and API can't drift.
 
-**Gate:** a backtest on a clean data dir fetches what it needs as a cancellable job with progress; closing a workspace in Discard mode removes every downloaded file; Keep reuses data with zero network calls on the next run; existing parity, crash-recovery and lookahead tests stay green.
+**Gate:** a backtest on a clean data dir fetches what it needs as a cancellable job with progress; quitting with *Discard* removes every downloaded file; *Keep* reuses data with zero network calls in the next app session; a second strategy on the same data in the same session makes no network calls; conversations survive restarts; existing parity, crash-recovery and lookahead tests stay green.
 
 ### Phase 2: Agent layer (4 to 5 weeks)
 
@@ -295,21 +313,21 @@ Roughly **10 to 13 weeks to M1** and **14 to 19 weeks to M2**.
 
 ### Phase 3: Product UX (3 to 4 weeks, overlapping Phase 2) → M1
 
-- **P3.1 Strategy Studio.** Chat on the left; on the right, the read-back card (approve, or edit in the visual builder) and the run report. Assumptions are shown as editable chips. Version history and diff between versions.
-- **P3.2 Data experience.** The data plan shown before a run; download progress toasts; the end-of-workspace Keep/Discard dialog; a Data Manager page (library size per instrument, delete, size cap, retention default).
+- **P3.1 Strategy Studio.** Chat on the left; on the right, the read-back card (approve, or edit in the visual builder) and the run report. Assumptions are shown as editable chips. Version history and diff between versions. A **history sidebar** of past conversations (search, rename, delete, export) per §4.4; opening one shows its chat, strategy versions and results, and lets the trader continue refining.
+- **P3.2 Data experience.** The data plan shown before a run; download progress toasts; a *Quit* button with the Keep/Discard dialog and *Remember my preference* checkbox; the startup prompt after an unclean exit; a status-bar session-cache size; a Data Manager page (library size per instrument, delete, size cap, retention preference, idle timeout).
 - **P3.3 Reports.** The existing chart, performance and trade-log views wired to run history; the grounded explanation; comparing two versions side by side.
 - **P3.4 Apply.** A one-click "Start paper" from an approved version, with the paper dashboard and Telegram alert setup reachable from the same screen. "Go live" exists only as a disabled control explaining that it arrives after Phase 7.
-- **P3.5 Onboarding.** A first-run wizard: data folder, retention default, LLM key (or skip and use the builder), and optional Upstox connection with the morning-login explainer. A **no-broker path** with simulated data or CSV import, so someone can try the whole loop in five minutes.
+- **P3.5 Onboarding.** A first-run wizard: data folder, retention preference (defaulting to *Ask every time*), LLM key (or skip and use the builder), and optional Upstox connection with the morning-login explainer. A **no-broker path** with simulated data or CSV import, so someone can try the whole loop in five minutes.
 - **P3.6 Frontend engineering.** A router, TanStack Query for server state, the generated API client, Vitest for components, one Playwright happy path (describe, approve, backtest, start paper on replay data), and basic accessibility (keyboard navigation, contrast). Keep the "synthetic data" badge everywhere simulated data appears.
 
-**Gate (M1):** on a clean machine, from install to a running paper replay: type a strategy, answer at most two questions, approve the read-back, see a backtest with no manual download, start paper, close the workspace and see the retention choice honoured. Restarting mid-conversation resumes at the same pause. Every earlier gate is still green.
+**Gate (M1):** on a clean machine, from install to a running paper replay: type a strategy, answer at most two questions, approve the read-back, see a backtest with no manual download, start paper, quit and see the retention choice honoured, relaunch and reopen the conversation from history. Restarting mid-conversation resumes at the same pause. Every earlier gate is still green.
 
 ### Phase 4: Measure and harden → M2 (4 to 6 weeks)
 
 - **P4.1 Eval set and harness.** 50 to 100 plain-English strategies with hand-written correct specs, including ambiguous, Hinglish and jargon-heavy cases, split dev/holdout about 70/30. Scores per field (entry, exit, legs, risk), valid-spec rate, questions asked, repair loops, cost and latency per compile, per model. CI runs a small subset against recorded responses; the full run is manual or nightly. The model choice for each graph step is decided here.
 - **P4.2 Schema v2.** Expression-valued thresholds (percentile ranks, VIX- or IV-scaled values), regime-conditional parameters, range parameters for sweeps, risk-based sizing. A v1-to-v2 migrator; v1 documents stay loadable. Streaming and vectorized evaluation must still agree to 1e-9. Needs an India VIX series. The IR gains matching fields.
 - **P4.3 Real option premiums.** If the P0.10 spike says Upstox Plus is viable: ingest strike-wise 1-minute candles for expired NIFTY and BANKNIFTY contracts and add a market-price provider to `OptionBook` with Black-Scholes as fallback. Either way: label each leg's premium source (market or model), report the share of fills priced from market data, and publish the model-vs-market error where both exist.
-- **P4.4 Packaging.** The built UI served by FastAPI; a `trade-terminal` console entry point; install via `uv tool` or `pipx`; a version check at startup. A desktop wrapper can wait until after Phase 5.
+- **P4.4 Packaging.** The built UI served by FastAPI; a `trade-terminal` console entry point; install via `uv tool` or `pipx`; a version check at startup. A lightweight desktop wrapper (for example Tauri) that starts the server and opens the UI in its own window, so closing the window is unambiguously "quitting the app" and shows the Keep/Discard dialog natively (§4.1).
 - **P4.5 Security.** Broker secrets and tokens move to the OS keychain (`.env` as an explicit fallback); a written threat model; a log-redaction test; CORS/Origin tests; dependency audits in CI; file-permission checks.
 - **P4.6 Operations.** `trade-terminal doctor` (token status, instrument-master age, coverage, disk, versions, LLM key validity); a redacted diagnostics bundle; daily backup of the app DB and journals (market data excluded, as it's regenerable); migrations run and verified at startup.
 - **P4.7 Compliance and copy.** Disclaimers (not investment advice, simulated vs real data, model vs market premiums); the LLM privacy notice; whatever the P0.10 terms and SEBI research require.
@@ -390,8 +408,8 @@ Recommended options are listed first.
 
 1. **Distribution:** a local-first app each trader installs (recommended; keeps their data and broker keys on their machine and keeps the regulatory picture simplest), or a hosted multi-user service (needs auth, per-user broker routing, and very likely algo-provider obligations).
 2. **"Production-ready" target:** M2 (recommended) or M4.
-3. **Data "session" boundary:** the workspace (recommended, §4.1) or each individual run.
-4. **Default retention mode:** Ask (recommended), Keep, or Discard.
+3. **Closing the browser tab:** end the session after 30 minutes with no UI connected and no paper session (recommended, §4.1), end it immediately, or never (only an explicit Quit ends it).
+4. **Conversation checkpoint pruning:** keep resumable checkpoints for 90 days (recommended; the readable history is kept forever) or forever.
 5. **LLM billing for beta:** bring your own key (recommended) or a bundled key.
 6. **Upstox Plus** for expired option data: decided by the P0.10 spike.
 7. **Hours per week:** all estimates assume the earlier plans' part-time pace.
@@ -401,7 +419,7 @@ Recommended options are listed first.
 ## 11. What changed from the 2026-10-01 plan
 
 - Phase 1 split into **Platform** (P1), **Agent** (P2) and **UX** (P3), because the old Phase 1 held all three in 4 to 6 weeks.
-- **Session-scoped cache and retention** designed in full (§4), replacing the old "retention modes later" item.
+- **App-session data cache with a Keep/Discard choice at quit, and permanent conversation history,** designed in full (§4), replacing the old "retention modes later" item.
 - **Compile IR** introduced, because the engine schema can't be used directly with structured outputs (finding 20).
 - **Code-generated read-back** and the rule that **the agent can't apply strategies** made explicit.
 - **One LLM provider at M1**; others only on eval evidence or user demand.
