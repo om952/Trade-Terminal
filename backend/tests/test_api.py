@@ -31,7 +31,8 @@ from backend.strategy.schema import Strategy
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app)
+    # The API only answers requests addressed to this machine.
+    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture(scope="module")
@@ -471,12 +472,15 @@ def test_api_shutdown_stops_sessions_resumably(seeded_dataset):
     from backend.core import log_setup
     from backend.live import journal as J
 
-    document = TestClient(app).get("/api/templates/ema_crossover").json()
+    document = TestClient(app, base_url="http://localhost").get(
+        "/api/templates/ema_crossover"
+    ).json()
     document["timeframe"] = "5m"
     document["name"] = "shutdown hook test"  # own hash, so its own journal
 
     try:
-        with TestClient(app) as lifespan_client:  # runs startup and shutdown
+        # Entering the client runs startup; leaving it runs shutdown.
+        with TestClient(app, base_url="http://localhost") as lifespan_client:
             started = lifespan_client.post("/api/live/start", json={
                 "strategy": document, "symbol": seeded_dataset, "source": "replay",
                 "replay_start": "2026-01-05", "replay_end": "2026-02-28",

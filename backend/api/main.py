@@ -5,8 +5,8 @@ same functions the CLI calls, and shapes the result for the UI. If a calculation
 lives here, it can diverge from what a backtest or a live session does, and the
 one-engine guarantee is gone.
 
-Run:
-    .venv/bin/uvicorn backend.api.main:app --reload --port 8000
+Run (local only; requests with a non-local Host or Origin are rejected):
+    .venv/bin/uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.analytics import metrics as M
+from backend.api.security import LocalOnlyMiddleware
 from backend.core.config import IST, settings
 from backend.core.log_setup import configure_logging
 from backend.data import instruments as inst
@@ -73,6 +74,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it runs first: nothing, not even CORS, sees a foreign request.
+app.add_middleware(LocalOnlyMiddleware)
 
 # Chart payloads are capped so a multi-year 1-minute backtest does not try to
 # ship a million candles to a browser that can only render a few thousand.

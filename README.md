@@ -188,8 +188,12 @@ data/
 Two processes. Backend first:
 
 ```bash
-.venv/bin/uvicorn backend.api.main:app --reload --port 8000
+.venv/bin/uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+The API serves this machine only: requests whose `Host` or `Origin` is not
+`localhost`, `127.0.0.1` or `[::1]` get a 403, which blocks DNS-rebinding and
+drive-by requests from other websites.
 
 Then the UI (proxies /api to port 8000):
 
