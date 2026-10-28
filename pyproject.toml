@@ -82,7 +82,6 @@ warn_unused_ignores = true
 # list once it passes; never add one.
 [[tool.mypy.overrides]]
 module = [
-    "backend.api.main",
     "backend.data.ingest",
     "backend.data.instruments",
     "backend.indicators.base",
