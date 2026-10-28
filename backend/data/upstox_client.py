@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -191,11 +192,15 @@ def fetch_candles(
     from_date: date,
     to_date: date | None = None,
     include_today: bool = True,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Fetch a full range, chunking as needed. This is the function to call.
 
     Clamps `from_date` to the earliest date Upstox actually serves for the unit,
     so asking for 1-minute data from 2015 returns 2022-onward rather than an error.
+
+    `on_progress(done, total)` is called before each chunk request. It may raise
+    to abandon the fetch (how a background job is cancelled).
     """
     tf = Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe
     today = pd.Timestamp.now(tz=IST).date()
@@ -215,8 +220,11 @@ def fetch_candles(
     cursor = from_date
     chunks = 0
     failed: list[tuple[date, date, str]] = []
+    total_chunks = (to_date - from_date).days // span + 1
 
     while cursor <= to_date:
+        if on_progress is not None:
+            on_progress(chunks, total_chunks)
         chunk_end = min(cursor + timedelta(days=span - 1), to_date)
         try:
             df = fetch_chunk(instrument_key, tf, cursor, chunk_end)

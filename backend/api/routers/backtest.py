@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -54,6 +55,16 @@ class BacktestRequest(BaseModel):
 
 @router.post("/api/backtest")
 def backtest(req: BacktestRequest, ctx: AppContext = Depends(current_context)) -> dict:
+    """Run a backtest in the request. For long runs, POST /api/jobs/backtest instead."""
+    return execute_backtest(req, ctx)
+
+
+def execute_backtest(
+    req: BacktestRequest,
+    ctx: AppContext,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict:
+    """The whole backtest request, callable from the endpoint or a background job."""
     try:
         strategy = Strategy.model_validate(req.strategy)
     except Exception as exc:
@@ -94,6 +105,7 @@ def backtest(req: BacktestRequest, ctx: AppContext = Depends(current_context)) -
             fill_model=fill_model,
             risk=guard,
             collect_events=req.include_chart,
+            on_progress=on_progress,
         )
         stats = M.compute_metrics(result.equity_curve, result.trades, capital, strategy.timeframe)
     except Exception as exc:

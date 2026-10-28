@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from backend.app.context import AppContext
-from backend.app.db import get_app_db, now_iso
+from backend.app.db import get_app_db, now_iso, to_json
 
 RunKind = Literal["backtest", "paper", "replay", "live"]
 
@@ -77,7 +77,7 @@ class RunStore:
                 " params_json, result_path, created_at, started_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)",
                 (rid, self.ctx.user_id, strategy_id, strategy_hash, family, kind,
-                 json.dumps(params or {}, default=str, sort_keys=True), result_path, stamp, stamp),
+                 to_json(params or {}), result_path, stamp, stamp),
             )
         return rid
 
@@ -145,8 +145,7 @@ class RunStore:
                 continue
             column = {"metrics": "metrics_json", "data_fingerprint": "data_fingerprint"}.get(name, name)
             sets.append(f"{column} = ?")
-            values.append(json.dumps(value, default=str, sort_keys=True)
-                          if name in ("metrics", "data_fingerprint") else value)
+            values.append(to_json(value) if name in ("metrics", "data_fingerprint") else value)
         values += [run_id, self.ctx.user_id]
         with self.db.connect() as conn:
             conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ? AND user_id = ?", values)

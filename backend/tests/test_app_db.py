@@ -172,3 +172,16 @@ def test_preferences_are_per_user(tmp_path):
     preferences.set("data_retention", "keep", alice)
     assert preferences.get("data_retention", alice) == "keep"
     assert preferences.get("data_retention", bob) == "ask"
+
+
+def test_stored_json_has_no_infinity_or_nan():
+    """Python writes Infinity/NaN, which is not JSON; the API sends them as null."""
+    import json
+    import math
+    from decimal import Decimal
+
+    from backend.app.db import to_json
+
+    text = to_json({"a": math.inf, "b": [-math.inf, math.nan, 1.5], "c": Decimal("2.50")})
+    assert "Infinity" not in text and "NaN" not in text
+    assert json.loads(text) == {"a": None, "b": [None, None, 1.5], "c": "2.50"}

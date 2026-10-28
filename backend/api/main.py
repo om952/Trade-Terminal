@@ -33,7 +33,12 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     configure_logging()
+    from backend.app.jobs import get_runner, shutdown_runner
     from backend.live.manager import manager
+
+    abandoned = get_runner().recover_interrupted()
+    if abandoned:
+        log.warning("%d background job(s) were interrupted by the last shutdown", abandoned)
 
     interrupted = manager.interrupted()
     if interrupted:
@@ -46,8 +51,9 @@ async def lifespan(_app: FastAPI):
         )
     log.info("Trade Terminal API started (data dir %s)", settings.data_dir)
     yield
-    log.info("Shutting down: stopping running sessions")
+    log.info("Shutting down: stopping running sessions and jobs")
     manager.stop_all("shutdown")
+    shutdown_runner()
 
 
 app = FastAPI(
@@ -77,7 +83,8 @@ async def _library_error(_request: Request, exc: LibraryError) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=status)
 
 
-from backend.api.routers import backtest, data, live, reference, strategies  # noqa: E402
+from backend.api.routers import backtest, data, jobs, live, reference, strategies  # noqa: E402
 
-for _router in (reference.router, data.router, strategies.router, backtest.router, live.router):
+for _router in (reference.router, data.router, strategies.router, backtest.router,
+                jobs.router, live.router):
     app.include_router(_router)

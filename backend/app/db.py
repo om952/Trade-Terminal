@@ -17,7 +17,9 @@ newer schema is how data gets corrupted.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import re
 import sqlite3
 import threading
@@ -25,6 +27,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from backend.app.context import AppContext
 from backend.core.config import IST
@@ -54,6 +57,23 @@ def available_migrations() -> list[tuple[int, Path]]:
 
 def now_iso() -> str:
     return datetime.now(IST).isoformat()
+
+
+def to_json(value: Any) -> str:
+    """JSON for storage. Infinity and NaN become null, the way the HTTP API sends
+    them: Python would otherwise write `Infinity`, which is not JSON and which a
+    browser cannot parse. Other non-JSON values (dates, Decimals) become strings."""
+    return json.dumps(_finite(value), default=str, sort_keys=True, allow_nan=False)
+
+
+def _finite(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]
+    return value
 
 
 class AppDB:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date
 
 from fastapi import HTTPException
@@ -80,7 +81,13 @@ class FetchRequest(BaseModel):
 
 @router.post("/api/data/fetch")
 def fetch_data(req: FetchRequest) -> dict:
-    """Pull history from Upstox into the local store."""
+    """Pull history from Upstox into the local store. For long ranges, POST
+    /api/jobs/fetch instead, which reports progress and can be cancelled."""
+    return execute_fetch(req)
+
+
+def execute_fetch(req: FetchRequest, on_progress: Callable[[int, int], None] | None = None) -> dict:
+    """The whole fetch request, callable from the endpoint or a background job."""
     from datetime import timedelta
 
     from backend.data.upstox_client import fetch_candles
@@ -89,7 +96,7 @@ def fetch_data(req: FetchRequest) -> dict:
     start = req.from_date or (date.today() - timedelta(days=req.days))
 
     try:
-        df = fetch_candles(key, req.timeframe, start)
+        df = fetch_candles(key, req.timeframe, start, on_progress=on_progress)
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
 
