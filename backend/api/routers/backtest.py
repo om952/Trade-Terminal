@@ -8,10 +8,14 @@ from decimal import Decimal
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.analytics import metrics as M
+from backend.api.deps import current_context
+from backend.app.context import AppContext
+from backend.app.runs import RunStore
+from backend.data.fingerprint import fingerprint
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
 from backend.strategy.runner import FillModel, preflight, run_backtest
@@ -43,10 +47,13 @@ class BacktestRequest(BaseModel):
     slippage_bps: float | None = None
     max_leverage: float = Field(default=5.0, gt=0, le=50)
     include_chart: bool = True
+    # The saved strategy this document is a version of, if any. Links the run
+    # into that strategy's history and its family's trial count.
+    library_id: str | None = None
 
 
 @router.post("/api/backtest")
-def backtest(req: BacktestRequest) -> dict:
+def backtest(req: BacktestRequest, ctx: AppContext = Depends(current_context)) -> dict:
     try:
         strategy = Strategy.model_validate(req.strategy)
     except Exception as exc:
@@ -72,16 +79,27 @@ def backtest(req: BacktestRequest) -> dict:
     )
     guard = RiskGuard(rules=strategy.risk, max_leverage=Decimal(str(req.max_leverage)))
 
-    result = run_backtest(
-        strategy, df,
-        starting_capital=capital,
-        lot_size=req.lot_size,
-        fill_model=fill_model,
-        risk=guard,
-        collect_events=req.include_chart,
+    runs = RunStore(ctx)
+    data_print = fingerprint(df, symbol, strategy.timeframe)
+    run_id = runs.start(
+        "backtest", strategy.content_hash(), strategy_id=req.library_id,
+        params=req.model_dump(mode="json", exclude={"strategy", "include_chart", "library_id"})
+        | {"symbol": symbol},
     )
-
-    stats = M.compute_metrics(result.equity_curve, result.trades, capital, strategy.timeframe)
+    try:
+        result = run_backtest(
+            strategy, df,
+            starting_capital=capital,
+            lot_size=req.lot_size,
+            fill_model=fill_model,
+            risk=guard,
+            collect_events=req.include_chart,
+        )
+        stats = M.compute_metrics(result.equity_curve, result.trades, capital, strategy.timeframe)
+    except Exception as exc:
+        runs.fail(run_id, f"{type(exc).__name__}: {exc}")
+        raise
+    runs.finish(run_id, metrics=stats.as_dict(), data_fingerprint=data_print)
     split = None
     if len(result.equity_curve) > 50:
         try:
@@ -97,6 +115,8 @@ def backtest(req: BacktestRequest) -> dict:
             split = None
 
     payload: dict[str, Any] = {
+        "run_id": run_id,
+        "data_fingerprint": data_print,
         "strategy_id": result.strategy_id,
         "strategy_hash": result.strategy_hash,
         "symbol": symbol,

@@ -17,11 +17,13 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend import __version__
 from backend.api.security import LocalOnlyMiddleware
+from backend.app.library import LibraryError, NotFound, ReadOnly
 from backend.core.config import settings
 from backend.core.log_setup import configure_logging
 
@@ -66,6 +68,13 @@ app.add_middleware(
 )
 # Added last so it runs first: nothing, not even CORS, sees a foreign request.
 app.add_middleware(LocalOnlyMiddleware)
+
+
+# One error model: domain errors become {"detail": message} with a fitting status.
+@app.exception_handler(LibraryError)
+async def _library_error(_request: Request, exc: LibraryError) -> JSONResponse:
+    status = 404 if isinstance(exc, NotFound) else 409 if isinstance(exc, ReadOnly) else 400
+    return JSONResponse({"detail": str(exc)}, status_code=status)
 
 
 from backend.api.routers import backtest, data, live, reference, strategies  # noqa: E402

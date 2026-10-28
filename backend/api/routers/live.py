@@ -8,9 +8,12 @@ from decimal import Decimal
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.api.deps import current_context
+from backend.app.context import AppContext
+from backend.app.runs import RunStore
 from backend.core.config import IST
 from backend.strategy.schema import Strategy
 
@@ -45,10 +48,29 @@ class LiveStartRequest(BaseModel):
     replay_end: date | None = None
     replay_speed: float = Field(default=0.0, ge=0, le=3600)
     poll_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
+    # The saved strategy this document is a version of, if any (run history).
+    library_id: str | None = None
+
+
+def _session_summary(session) -> dict[str, Any]:
+    from backend.live.journal import RESUMABLE_END_REASONS
+
+    portfolio = session.portfolio
+    reason = session.live.stop_reason
+    return {
+        "session_id": session.journal.session_id,
+        "trades": len(portfolio.closed_trades),
+        "realized_pnl": float(portfolio.realized_pnl),
+        "fees_paid": float(portfolio.fees_paid),
+        "net_pnl": float(portfolio.realized_pnl - portfolio.fees_paid),
+        "bars_seen": session.live.bars_seen,
+        "stop_reason": reason,
+        "resumable": reason in RESUMABLE_END_REASONS,
+    }
 
 
 @router.post("/api/live/start")
-def live_start(req: LiveStartRequest) -> dict:
+def live_start(req: LiveStartRequest, ctx: AppContext = Depends(current_context)) -> dict:
     from backend.core.config import Mode
     from backend.live.manager import manager
     from backend.live.session import SessionConfig
@@ -107,14 +129,45 @@ def live_start(req: LiveStartRequest) -> dict:
         source_kind=req.source,
     )
 
+    from backend.live.session import make_session_id
+
+    # Record a run only for a session this call actually starts; a second click
+    # on an already-running session returns it without a duplicate run.
+    run_id = None
+    session_id = make_session_id(config.strategy, config.instrument_key)
+    runs = RunStore(ctx)
+    if not manager.is_running(session_id):
+        run_id = runs.start(
+            "paper" if req.source == "live" else "replay",
+            strategy.content_hash(),
+            strategy_id=req.library_id,
+            params=req.model_dump(mode="json", exclude={"strategy", "library_id"})
+            | {"symbol": symbol, "session_id": session_id},
+        )
+
+    def on_finish(finished, error) -> None:
+        if run_id is None:
+            return
+        if error is not None:
+            runs.fail(run_id, f"{type(error).__name__}: {error}")
+        else:
+            runs.finish(run_id, metrics=_session_summary(finished),
+                        result_path=str(finished.journal.path))
+
     session, started = manager.start(
-        config, source=source, history_frame=history, history_before=history_before
+        config, source=source, history_frame=history, history_before=history_before,
+        session_id=session_id, on_finish=on_finish,
     )
+    if not started and run_id is not None:
+        # Lost a race with another start of the same session: it owns the run.
+        runs.cancel(run_id)
+        run_id = None
     return {
         "session_id": session.journal.session_id,
         "started": started,
         "already_running": not started,
         "source": req.source,
+        "run_id": run_id,
         "snapshot": manager.snapshot(session.journal.session_id) or {},
     }
 

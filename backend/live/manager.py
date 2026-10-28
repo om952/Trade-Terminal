@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
@@ -43,8 +44,13 @@ class SessionManager:
         session_id: str | None = None,
         history_frame=None,
         history_before=None,
+        on_finish: Callable[[PaperSession, BaseException | None], None] | None = None,
     ) -> tuple[PaperSession, bool]:
-        """Start a session. Returns (session, started_now)."""
+        """Start a session. Returns (session, started_now).
+
+        `on_finish(session, error)` runs on the session's thread once it ends,
+        however it ends. It is not called when the session was already running.
+        """
         sid = session_id or make_session_id(config.strategy, config.instrument_key)
 
         with self._lock:
@@ -60,21 +66,30 @@ class SessionManager:
             self._sessions[sid] = session
 
             thread = threading.Thread(
-                target=self._run, args=(sid, session), name=f"session-{sid}", daemon=True
+                target=self._run, args=(sid, session, on_finish), name=f"session-{sid}",
+                daemon=True,
             )
             self._threads[sid] = thread
             thread.start()
 
         return session, True
 
-    def _run(self, sid: str, session: PaperSession) -> None:
+    def _run(self, sid: str, session: PaperSession, on_finish=None) -> None:
+        error: BaseException | None = None
         try:
             session.run()
-        except Exception:
+        except Exception as exc:
             # `PaperSession.run` has already journaled, alerted and marked the
             # session failed. Re-raising off a daemon thread would only kill the
             # thread silently, so log and let the snapshot carry the bad news.
+            error = exc
             log.exception("Session %s ended in error", sid)
+        finally:
+            if on_finish is not None:
+                try:
+                    on_finish(session, error)
+                except Exception:
+                    log.exception("Session %s: finish callback failed", sid)
 
     def stop(self, session_id: str, reason: str = "manual") -> bool:
         with self._lock:
