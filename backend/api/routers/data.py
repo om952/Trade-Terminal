@@ -6,13 +6,14 @@ import logging
 from collections.abc import Callable
 from datetime import date
 
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.api.deps import current_context
+from backend.app.context import AppContext
 from backend.data.calendar import find_gaps
+from backend.data.service import DataService
 from backend.data.store import all_coverage, read_candles, write_candles
-
-from fastapi import APIRouter
 
 from backend.api.common import (
     MAX_CHART_BARS,
@@ -86,33 +87,60 @@ def fetch_data(req: FetchRequest) -> dict:
     return execute_fetch(req)
 
 
-def execute_fetch(req: FetchRequest, on_progress: Callable[[int, int], None] | None = None) -> dict:
-    """The whole fetch request, callable from the endpoint or a background job."""
-    from datetime import timedelta
+def execute_fetch(
+    req: FetchRequest,
+    on_progress: Callable[[int, int], None] | None = None,
+    ctx: AppContext | None = None,
+) -> dict:
+    """The whole fetch request, callable from the endpoint or a background job.
 
-    from backend.data.upstox_client import fetch_candles
+    Goes through the data service, so only sessions not already stored are
+    requested, and sessions the broker has no data for are remembered."""
+    from datetime import timedelta
 
     key = _resolve_or_400(req.symbol)
     start = req.from_date or (date.today() - timedelta(days=req.days))
+    service = DataService(ctx)
+    plan = service.plan(key, req.timeframe, start, None)
+    report = service.ensure(plan, on_progress)
 
-    try:
-        df = fetch_candles(key, req.timeframe, start, on_progress=on_progress)
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    if report.errors and not report.fetched_bars:
+        raise HTTPException(502, report.errors[0])
 
-    if df.empty:
+    stored = read_candles(key, plan.fetch_timeframe)
+    if stored.empty:
         raise HTTPException(404, f"Upstox returned no data for {key} {req.timeframe}")
 
-    total = write_candles(key, req.timeframe, df, source="upstox")
-    report = find_gaps(read_candles(key, req.timeframe), key, req.timeframe)
+    gaps = find_gaps(stored, key, plan.fetch_timeframe)
     return {
         "instrument_key": key,
-        "fetched": len(df),
-        "total_bars": total,
-        "coverage_pct": round(report.coverage_pct, 2),
-        "missing_sessions": len(report.missing_sessions),
-        "clean": report.is_clean,
+        "fetched": report.fetched_bars,
+        "already_stored_sessions": plan.sessions_needed - len(plan.sessions_missing),
+        "total_bars": len(stored),
+        "coverage_pct": round(gaps.coverage_pct, 2),
+        "missing_sessions": len(gaps.missing_sessions),
+        "no_data_sessions": len(report.no_data_sessions),
+        "clean": gaps.is_clean,
+        "errors": report.errors,
     }
+
+
+@router.get("/api/data/plan")
+def data_plan(
+    symbol: str,
+    timeframe: str = "5m",
+    start: date | None = None,
+    end: date | None = None,
+    ctx: AppContext = Depends(current_context),
+) -> dict:
+    """What a backtest over this range would download first, and roughly how long it
+    would take, without downloading anything."""
+    key = symbol if "|" in symbol else _resolve_or_400(symbol)
+    try:
+        plan = DataService(ctx).plan(key, timeframe, start, end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"plan": plan.to_dict()}
 
 
 class SimulateRequest(BaseModel):

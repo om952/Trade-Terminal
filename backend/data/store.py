@@ -1,52 +1,45 @@
-"""Candle storage: DuckDB for metadata and queries, Parquet for the bars themselves.
+"""Storage front door: DuckDB for the instrument master, candles via backend.data.candles.
 
 Layout:
-    data/terminal.duckdb                          instruments, meta, coverage
-    data/parquet/candles/{timeframe}/{key}.parquet one file per instrument+timeframe
+    data/terminal.duckdb                       instrument master and meta
+    data/store/candles/{tf}/{key}/{YYYY-MM}.parquet   candles (see candles.py)
+    data/app.sqlite                            which candles are where (data_partitions)
 
-Why not put candles in DuckDB tables: 1-minute bars across a few hundred
-instruments over several years runs to hundreds of millions of rows. Parquet
-keeps them columnar, compressed, and independently replaceable, and DuckDB
-queries them in place at full speed. A corrupt or stale instrument is one file
-to delete, not a surgical DELETE against a giant table.
+The candle functions here (`read_candles`, `write_candles`, ...) keep the
+signatures the rest of the code base has always used and delegate to the kept
+library (`backend.data.candles.library_store`). New code should use the data
+service (`backend.data.service.DataService`), which also downloads what is
+missing.
 
-Writes are idempotent. Re-fetching a range you already have produces a
-byte-identical file, which is what makes the Phase 1 reproducibility gate
-meaningful.
-
-Writes are also atomic and serialized. The merged file is written beside the
-live one and swapped in with `os.replace`, so a crash mid-write leaves the old
-file intact rather than a truncated one. A per-instrument lock makes the
-read-merge-write a single step within the process, and opening DuckDB first
-keeps a second process (which DuckDB refuses as a second writer) from touching
-the files at all.
+Candle files used to live at data/parquet/candles/{tf}/{key}.parquet with their
+coverage in DuckDB. `migrate_legacy_candles()` moves them into the new layout
+once, on first use; the old files are kept under data/parquet/legacy-migrated/
+until you delete them.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import re
+import shutil
 import threading
-import uuid
-from contextlib import contextmanager
 from datetime import date, datetime
-from pathlib import Path
 
 import duckdb
 import pandas as pd
 
 from backend.core.config import IST, settings
+from backend.data.candles import CANDLE_COLUMNS, library_store, safe_name
 
 log = logging.getLogger(__name__)
 
-CANDLE_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "oi"]
+__all__ = [
+    "CANDLE_COLUMNS", "all_coverage", "close_db", "delete_candles", "get_db",
+    "migrate_legacy_candles", "read_candles", "read_coverage", "stored_instruments",
+    "write_candles",
+]
 
 _db: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
-
-_file_locks: dict[tuple[str, str], threading.Lock] = {}
-_file_locks_guard = threading.Lock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS instruments (
@@ -119,73 +112,18 @@ def close_db() -> None:
             _db = None
 
 
-def _safe(instrument_key: str) -> str:
-    """Filesystem-safe filename from an instrument key.
 
-    'NSE_INDEX|Nifty 50' -> 'NSE_INDEX__Nifty_50'
-    """
-    return re.sub(r"[^A-Za-z0-9._-]", "_", instrument_key.replace("|", "__"))
+# ---------------------------------------------------------------------------
+# Candles (delegating to the library store)
+# ---------------------------------------------------------------------------
 
-
-def candle_path(instrument_key: str, timeframe: str) -> Path:
-    d = settings.parquet_dir / "candles" / timeframe
-    d.mkdir(parents=True, exist_ok=True)
-    return d / f"{_safe(instrument_key)}.parquet"
+_migrated: set[str] = set()
+_migrate_lock = threading.Lock()
 
 
-def _normalize(df: pd.DataFrame) -> pd.DataFrame:
-    """Coerce to the canonical schema, sorted, deduplicated, tz-aware IST.
-
-    Deduplication keeps the LAST occurrence: a re-fetch of an overlapping range
-    is treated as a correction, since the exchange occasionally revises bars.
-    """
-    df = df.copy()
-
-    for col in CANDLE_COLUMNS:
-        if col not in df.columns:
-            df[col] = 0 if col in ("volume", "oi") else pd.NA
-    df = df[CANDLE_COLUMNS]
-
-    ts = pd.to_datetime(df["timestamp"], utc=True, format="mixed")
-    df["timestamp"] = ts.dt.tz_convert(IST)
-
-    for col in ("open", "high", "low", "close"):
-        df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
-    for col in ("volume", "oi"):
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
-
-    df = df.dropna(subset=["open", "high", "low", "close"])
-    df = df.sort_values("timestamp", kind="stable")
-    df = df.drop_duplicates(subset="timestamp", keep="last")
-    return df.reset_index(drop=True)
-
-
-@contextmanager
-def _candle_lock(instrument_key: str, timeframe: str):
-    with _file_locks_guard:
-        lock = _file_locks.setdefault((instrument_key, timeframe), threading.Lock())
-    with lock:
-        yield
-
-
-def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
-    """Write `df` to `path` so that readers only ever see the old or the new file."""
-    tmp = path.with_name(f".{path.name}.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp")
-    try:
-        df.to_parquet(tmp, index=False, compression="snappy")
-        with open(tmp, "rb") as fh:
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    if os.name == "posix":
-        # Make the rename itself durable, not just the file contents.
-        dir_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+def _library():
+    _ensure_migrated()
+    return library_store()
 
 
 def write_candles(
@@ -194,53 +132,11 @@ def write_candles(
     df: pd.DataFrame,
     source: str = "upstox",
 ) -> int:
-    """Merge bars into storage. Returns total bar count after the merge.
+    """Merge bars into the kept library. Returns total bar count after the merge.
 
-    Idempotent: writing the same data twice leaves the file unchanged.
+    Idempotent: writing the same data twice leaves the series unchanged.
     """
-    if df.empty:
-        return read_coverage(instrument_key, timeframe).get("bar_count", 0)
-
-    incoming = _normalize(df)
-    get_db()  # claim the data dir before touching any file (single-writer guard)
-
-    with _candle_lock(instrument_key, timeframe):
-        path = candle_path(instrument_key, timeframe)
-        if path.exists():
-            existing = pd.read_parquet(path)
-            existing["timestamp"] = (
-                pd.to_datetime(existing["timestamp"], utc=True).dt.tz_convert(IST)
-            )
-            combined = pd.concat([existing, incoming], ignore_index=True)
-            combined = combined.sort_values("timestamp", kind="stable")
-            combined = (
-                combined.drop_duplicates(subset="timestamp", keep="last").reset_index(drop=True)
-            )
-        else:
-            combined = incoming
-
-        _atomic_write_parquet(combined, path)
-        _update_coverage(instrument_key, timeframe, combined, source)
-    return len(combined)
-
-
-def _update_coverage(
-    instrument_key: str, timeframe: str, df: pd.DataFrame, source: str
-) -> None:
-    get_db().execute(
-        """INSERT OR REPLACE INTO coverage
-           (instrument_key, timeframe, first_bar, last_bar, bar_count, updated_at, source)
-           VALUES (?,?,?,?,?,?,?)""",
-        [
-            instrument_key,
-            timeframe,
-            df["timestamp"].iloc[0].to_pydatetime(),
-            df["timestamp"].iloc[-1].to_pydatetime(),
-            len(df),
-            datetime.now(IST),
-            source,
-        ],
-    )
+    return _library().write(instrument_key, timeframe, df, source)
 
 
 def read_candles(
@@ -250,67 +146,100 @@ def read_candles(
     end: date | datetime | None = None,
 ) -> pd.DataFrame:
     """Read bars for a range. Returns an empty canonical frame if nothing stored."""
-    path = candle_path(instrument_key, timeframe)
-    if not path.exists():
-        return pd.DataFrame(columns=CANDLE_COLUMNS)
-
-    df = pd.read_parquet(path)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert(IST)
-
-    if start is not None:
-        df = df[df["timestamp"] >= _as_ts(start)]
-    if end is not None:
-        df = df[df["timestamp"] <= _as_ts(end, end_of_day=True)]
-
-    return df.reset_index(drop=True)
-
-
-def _as_ts(value: date | datetime, end_of_day: bool = False) -> pd.Timestamp:
-    if isinstance(value, datetime):
-        ts = pd.Timestamp(value)
-    else:
-        ts = pd.Timestamp(value)
-        if end_of_day:
-            ts = ts + pd.Timedelta(hours=23, minutes=59, seconds=59)
-    return ts.tz_localize(IST) if ts.tz is None else ts.tz_convert(IST)
+    return _library().read(instrument_key, timeframe, start, end)
 
 
 def read_coverage(instrument_key: str, timeframe: str) -> dict:
-    row = get_db().execute(
-        """SELECT first_bar, last_bar, bar_count, updated_at, source
-           FROM coverage WHERE instrument_key = ? AND timeframe = ?""",
-        [instrument_key, timeframe],
-    ).fetchone()
-    if not row:
+    info = _library().info(instrument_key, timeframe)
+    if info is None:
         return {}
     return {
-        "first_bar": row[0], "last_bar": row[1], "bar_count": row[2],
-        "updated_at": row[3], "source": row[4],
+        "first_bar": pd.Timestamp(info.first_bar).tz_convert(IST),
+        "last_bar": pd.Timestamp(info.last_bar).tz_convert(IST),
+        "bar_count": info.rows,
+        "updated_at": pd.Timestamp(info.updated_at),
+        "source": info.source,
     }
 
 
 def all_coverage() -> pd.DataFrame:
-    # Built from rows rather than DuckDB's `.df()`, whose pandas conversion
-    # calls an API pandas 3 has deprecated.
-    cursor = get_db().execute("SELECT * FROM coverage ORDER BY instrument_key, timeframe")
-    columns = [d[0] for d in cursor.description]
-    return pd.DataFrame(cursor.fetchall(), columns=columns)
+    columns = ["instrument_key", "timeframe", "first_bar", "last_bar", "bar_count",
+               "updated_at", "source"]
+    rows = [
+        (i.instrument_key, i.timeframe, pd.Timestamp(i.first_bar).tz_convert(IST),
+         pd.Timestamp(i.last_bar).tz_convert(IST), i.rows, pd.Timestamp(i.updated_at), i.source)
+        for i in _library().all_series()
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:
-    db = get_db()
-    with _candle_lock(instrument_key, timeframe):
-        candle_path(instrument_key, timeframe).unlink(missing_ok=True)
-        db.execute(
-            "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
-            [instrument_key, timeframe],
-        )
+    _library().delete(instrument_key, timeframe)
 
 
 def stored_instruments(timeframe: str | None = None) -> list[tuple[str, str]]:
-    q = "SELECT instrument_key, timeframe FROM coverage"
-    params: list = []
-    if timeframe:
-        q += " WHERE timeframe = ?"
-        params.append(timeframe)
-    return [tuple(r) for r in get_db().execute(q + " ORDER BY 1,2", params).fetchall()]
+    return [(i.instrument_key, i.timeframe) for i in _library().all_series(timeframe)]
+
+
+# ---------------------------------------------------------------------------
+# One-time migration from the single-file layout
+# ---------------------------------------------------------------------------
+
+def _ensure_migrated() -> None:
+    key = str(settings.data_dir.resolve())
+    if key in _migrated:
+        return
+    with _migrate_lock:
+        if key not in _migrated:
+            migrate_legacy_candles()
+            _migrated.add(key)
+
+
+def migrate_legacy_candles() -> int:
+    """Move data/parquet/candles/{tf}/{key}.parquet into the partitioned store.
+
+    Instrument keys come from the old DuckDB coverage table (file names are a
+    lossy encoding of them). Each file is copied into the new store and then
+    moved aside to data/parquet/legacy-migrated/, never deleted, so the
+    migration can be checked and re-done. Returns how many series were moved.
+    """
+    legacy_root = settings.parquet_dir / "candles"
+    if not legacy_root.exists() or not any(legacy_root.rglob("*.parquet")):
+        return 0
+
+    try:
+        rows = get_db().execute(
+            "SELECT instrument_key, timeframe, source FROM coverage"
+        ).fetchall() if _has_table("coverage") else []
+    except duckdb.Error as exc:
+        log.warning("Could not read legacy coverage, skipping candle migration: %s", exc)
+        return 0
+
+    library = library_store()
+    aside = settings.parquet_dir / "legacy-migrated"
+    moved = 0
+    for instrument_key, timeframe, source in rows:
+        path = legacy_root / timeframe / f"{safe_name(instrument_key)}.parquet"
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        library.write(instrument_key, timeframe, df, source or "upstox")
+        target = aside / timeframe / path.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), target)
+        moved += 1
+        log.info("Migrated %s %s (%d bars) into the partitioned store", instrument_key,
+                 timeframe, len(df))
+
+    leftovers = [p for p in legacy_root.rglob("*.parquet")]
+    if leftovers:
+        log.warning("%d legacy candle file(s) had no coverage record and were left in %s",
+                    len(leftovers), legacy_root)
+    return moved
+
+
+def _has_table(name: str) -> bool:
+    row = get_db().execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?", [name]
+    ).fetchone()
+    return bool(row and row[0])

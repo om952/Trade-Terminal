@@ -20,10 +20,16 @@ DEFAULTS: dict[str, Any] = {
     "idle_minutes": 30,
     # How long a paused conversation stays resumable exactly where it stopped.
     "checkpoint_retention_days": 15,
+    # Download only 1-minute bars and build 3m, 5m, 15m, 1h... locally, instead
+    # of downloading each timeframe. Off until `ingest verify-derivation` shows
+    # derived bars match the broker's native ones on your data: paper trading
+    # reads native bars, and backtests must see the same ones.
+    "derive_intraday_from_1m": False,
 }
 
 ALLOWED_VALUES: dict[str, set[Any]] = {
     "data_retention": {"ask", "keep", "discard"},
+    "derive_intraday_from_1m": {True, False},
 }
 
 

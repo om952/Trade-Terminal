@@ -56,11 +56,24 @@ python -m backend.data.ingest instruments                # sync contract master
 python -m backend.data.ingest bootstrap --days 365       # starter dataset
 python -m backend.data.ingest fetch NIFTY -t 5m --from 2024-01-01
 python -m backend.data.ingest verify NIFTY -t 5m         # gap check
+python -m backend.data.ingest verify-derivation NIFTY    # do bars built from 1m match Upstox's?
 python -m backend.data.ingest simulate NIFTY -t 5m --days 365 --seed 42
 python -m backend.data.ingest import-csv data.csv --symbol NIFTY -t 1d
 ```
 
 `fetch` resumes from what is already stored, so re-running it is cheap and safe.
+
+Backtests don't need a manual download: the data service
+(`backend/data/service.py`) fetches only the trading sessions a range is
+missing, remembers sessions the broker has no data for, and re-checks recent
+sessions that were stored mid-day. `GET /api/data/plan` shows what a range would
+download, and roughly how long it would take, before anything is fetched.
+
+Setting `derive_intraday_from_1m` downloads only 1-minute bars and builds 3m,
+5m, 15m and hourly bars locally. It is off by default: paper trading reads
+Upstox's native bars, so backtests must see identical ones. Run
+`verify-derivation` on your data first, and turn it on only if it reports
+IDENTICAL.
 
 ### Real vs simulated
 
@@ -156,6 +169,12 @@ is a real end.
 
 ```
 backend/
+  app/
+    db.py             app database: SQLite, numbered migrations
+    library.py        saved strategies and their version history
+    runs.py           run history and the trial counter
+    jobs.py           background jobs: progress, cancel
+    preferences.py    per-user settings
   core/
     interfaces.py     DataFeed + Broker protocols — the seam everything hangs off
     config.py         .env loading; the only place secrets are read
@@ -163,7 +182,11 @@ backend/
     upstox_auth.py    OAuth, token cache, expiry health check
     upstox_client.py  REST client: rate limiting, chunking, retries
     instruments.py    contract master sync and lookups
-    store.py          DuckDB metadata + Parquet candles
+    store.py          instrument master (DuckDB); old candle API, legacy migration
+    candles.py        Parquet candles partitioned by instrument, timeframe, month
+    service.py        get_bars(): fetch only what's missing, data plans
+    resample.py       intraday bars built from 1-minute bars
+    fingerprint.py    hashes of the bars a run used
     calendar.py       trading sessions, holidays, gap detection
     simulator.py      GBM + jump-diffusion, Black-Scholes, Greeks
     csv_import.py     external CSV ingestion with validation
@@ -180,10 +203,12 @@ backend/
     alerts.py         Telegram
     run.py            CLI front door
   tests/
-data/
-  parquet/            candle files (gitignored)
-  journal/            live event journal (gitignored)
-  terminal.duckdb     instruments, coverage, metadata (gitignored)
+data/                 everything here is gitignored
+  store/candles/      candles: {timeframe}/{instrument}/{YYYY-MM}.parquet
+  journal/            live event journal
+  logs/               rotating application log
+  app.sqlite          strategies, runs, jobs, preferences, data index
+  terminal.duckdb     instrument master
 ```
 
 ## Running the app

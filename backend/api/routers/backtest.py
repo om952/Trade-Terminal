@@ -30,7 +30,7 @@ from backend.api.common import (
     _downsample,
     _epoch,
     _format_validation_error,
-    _load_candles,
+    _load_bars,
 )
 
 log = logging.getLogger(__name__)
@@ -63,17 +63,22 @@ def execute_backtest(
     req: BacktestRequest,
     ctx: AppContext,
     on_progress: Callable[[int, int], None] | None = None,
+    on_data_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
-    """The whole backtest request, callable from the endpoint or a background job."""
+    """The whole backtest request, callable from the endpoint or a background job.
+
+    Downloads whatever bars the range is missing first (`on_data_progress`
+    follows that), then runs the backtest (`on_progress`)."""
     try:
         strategy = Strategy.model_validate(req.strategy)
     except Exception as exc:
         raise HTTPException(422, {"errors": _format_validation_error(exc)}) from exc
 
     symbol = req.symbol or strategy.instrument.symbol
-    df = _load_candles(symbol, strategy.timeframe, req.start, req.end)
+    df, data_notes = _load_bars(symbol, strategy.timeframe, req.start, req.end, ctx=ctx,
+                                on_progress=on_data_progress)
 
-    warnings = preflight(strategy, df)
+    warnings = data_notes + preflight(strategy, df)
     capital = Decimal(str(req.starting_capital))
 
     from backend.execution.costs import segment_for

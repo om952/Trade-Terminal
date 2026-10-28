@@ -79,12 +79,15 @@ async def job_events(job_id: str, ctx: AppContext = Depends(current_context)) ->
 
 @router.post("/api/jobs/backtest", status_code=202)
 def start_backtest_job(req: BacktestRequest, ctx: AppContext = Depends(current_context)) -> dict:
+    # The first half of the bar is the download (if any), the second the backtest.
     def work(job: JobHandle) -> dict:
-        job.progress(0.0, "loading data", force=True)
+        job.progress(0.0, "checking data", force=True)
         return execute_backtest(
             req, ctx,
-            on_progress=lambda done, total: job.progress(done / max(total, 1),
-                                                         f"bar {done:,} of {total:,}"),
+            on_data_progress=lambda done, total: job.progress(
+                0.5 * done / max(total, 1), f"downloading: request {done} of {total}"),
+            on_progress=lambda done, total: job.progress(
+                0.5 + 0.5 * done / max(total, 1), f"backtesting: bar {done:,} of {total:,}"),
         )
 
     params = req.model_dump(mode="json", exclude={"strategy"}) | {
@@ -100,6 +103,7 @@ def start_fetch_job(req: FetchRequest, ctx: AppContext = Depends(current_context
             req,
             on_progress=lambda done, total: job.progress(done / max(total, 1),
                                                          f"request {done + 1} of {total}"),
+            ctx=ctx,
         )
 
     job_id = get_runner().submit("fetch", work, params=req.model_dump(mode="json"), ctx=ctx)

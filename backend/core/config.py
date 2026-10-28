@@ -82,6 +82,8 @@ class Settings(BaseSettings):
 
     @property
     def parquet_dir(self) -> Path:
+        """Where candle files lived before the partitioned store (read only by the
+        one-time migration in backend.data.store)."""
         return self.data_dir / "parquet"
 
     @property
@@ -106,7 +108,7 @@ class Settings(BaseSettings):
             )
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.parquet_dir, self.journal_dir):
+        for d in (self.data_dir, self.journal_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

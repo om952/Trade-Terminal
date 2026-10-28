@@ -262,17 +262,25 @@ def fetch_candles(
             # historical range is still valid, so this must not fail the fetch.
             log.debug("Intraday fetch skipped: %s", exc)
 
+    # Callers that remember "no data for this session" must not do so for a
+    # window that merely failed, so the failed windows travel with the result.
+    failed_ranges = [(a, b) for a, b, _ in failed]
+
     if not frames:
         log.warning("No data for %s %s (%s..%s) across %d chunks",
                     instrument_key, tf.label, from_date, to_date, chunks)
-        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        empty = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        empty.attrs["failed_ranges"] = failed_ranges
+        return empty
 
     out = pd.concat(frames, ignore_index=True)
     out = out.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
     log.info("%s %s: %d bars (%s..%s) in %d calls",
              instrument_key, tf.label, len(out),
              out["timestamp"].iloc[0].date(), out["timestamp"].iloc[-1].date(), chunks)
-    return out.reset_index(drop=True)
+    out = out.reset_index(drop=True)
+    out.attrs["failed_ranges"] = failed_ranges
+    return out
 
 
 def profile() -> dict:
