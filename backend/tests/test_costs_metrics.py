@@ -22,7 +22,6 @@ from backend.analytics import metrics as M
 from backend.data.simulator import generate_ohlcv
 from backend.execution.costs import (
     SCHEDULES,
-    CostBreakdown,
     Segment,
     breakeven_move,
     compute_costs,
@@ -350,6 +349,7 @@ def test_split_verdict_flags_overfit():
 
     split = M.split_metrics(curve, trades, Decimal("100000"), "1d")
 
+    assert split.split_date == split_ts
     assert split.in_sample.total_trades >= 10
     assert split.out_of_sample.total_trades >= 10
     assert split.in_sample.total_return_pct > 0

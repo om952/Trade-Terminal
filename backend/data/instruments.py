@@ -19,7 +19,7 @@ from typing import Iterable, Literal
 
 import httpx
 
-from backend.core.config import IST, settings
+from backend.core.config import IST
 
 log = logging.getLogger(__name__)
 
@@ -118,11 +118,15 @@ def sync(exchange: Exchange = "complete") -> int:
     source of truth, and a stale contract lingering in our table would be a
     silent source of orders against instruments that no longer trade.
     """
-    from backend.data.store import get_db
-
     instruments = download(exchange)
     if not instruments:
         raise RuntimeError(f"Instrument master for {exchange} came back empty")
+    return replace_all(instruments)
+
+
+def replace_all(instruments: list[Instrument]) -> int:
+    """Persist a full contract list, replacing whatever was stored."""
+    from backend.data.store import get_db
 
     rows = [
         (
@@ -293,7 +297,9 @@ def iter_underlyings(segment: str) -> Iterable[str]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    from backend.core.log_setup import configure_logging
+
+    configure_logging(console_format="%(levelname)s %(name)s: %(message)s", datefmt=None)
     n = sync()
     print(f"\n{n:,} instruments synced")
     print(f"NIFTY  -> {resolve('NIFTY')}")

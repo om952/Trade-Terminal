@@ -3,6 +3,8 @@
 // backtest or a live session does, which is exactly what the one-engine design
 // exists to prevent.
 
+import type { components } from "./api-types";
+
 export interface IndicatorMeta {
   name: string;
   category: string;
@@ -260,6 +262,19 @@ export interface SessionRow {
   errors?: string[];
 }
 
+export interface InterruptedSession {
+  session_id: string;
+  strategy_name: string;
+  symbol: string;
+  timeframe: string;
+  cause: "crash" | "app shutdown";
+  bars_seen: number;
+  trades: number;
+  open_legs: string[];
+  last_bar_at: string | null;
+  resume: LiveStartRequest;
+}
+
 export interface LiveStartRequest {
   strategy: unknown;
   symbol?: string;
@@ -302,8 +317,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, response.status, detail);
   }
 
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+
+// Types generated from the API's OpenAPI schema (npm run gen:api). New
+// endpoints are typed from these; older ones keep the hand-written interfaces
+// above until the UI moves onto typed responses.
+type Schemas = components["schemas"];
+export type LibraryStrategy = Schemas["StrategyOut"];
+export type StrategyVersion = Schemas["VersionOut"];
+export type StrategyVersionSummary = Schemas["VersionSummaryOut"];
+export type RunRecord = Schemas["RunOut"];
+export type Job = Schemas["JobOut"];
+export type DataPlan = Schemas["DataPlanOut"];
+export type AppSession = Schemas["AppSessionOut"];
+export type PendingSession = Schemas["PendingSessionOut"];
+export type BacktestRequest = Schemas["BacktestRequest"];
+export type FetchRequest = Schemas["FetchRequest"];
+
+const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
+const query = (params: Record<string, string | number | boolean | undefined | null>) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) q.set(k, String(v));
+  const text = q.toString();
+  return text ? `?${text}` : "";
+};
+const id = encodeURIComponent;
 
 export const api = {
   status: () => request<Status>("/api/status"),
@@ -379,10 +419,77 @@ export const api = {
   liveSessions: () =>
     request<{ active: SessionRow[]; history: SessionRow[] }>("/api/live/sessions"),
 
+  liveInterrupted: () =>
+    request<{ sessions: InterruptedSession[] }>("/api/live/interrupted"),
+
   liveSnapshot: (sessionId: string, includeBars = true) =>
     request<LiveSnapshot>(
       `/api/live/${encodeURIComponent(sessionId)}?include_bars=${includeBars}`,
     ),
+  // -- strategy library -------------------------------------------------------
+  strategies: (opts: { includeArchived?: boolean; includeTemplates?: boolean } = {}) =>
+    request<Schemas["StrategyListOut"]>(
+      `/api/strategies${query({
+        include_archived: opts.includeArchived,
+        include_templates: opts.includeTemplates,
+      })}`,
+    ),
+  strategy: (strategyId: string) =>
+    request<Schemas["StrategyDetailOut"]>(`/api/strategies/${id(strategyId)}`),
+  createStrategy: (body: Schemas["SaveRequest"]) =>
+    request<Schemas["StrategyOneOut"]>("/api/strategies", post(body)),
+  strategyVersions: (strategyId: string) =>
+    request<Schemas["VersionListOut"]>(`/api/strategies/${id(strategyId)}/versions`),
+  strategyVersion: (strategyId: string, hash: string) =>
+    request<Schemas["VersionOneOut"]>(`/api/strategies/${id(strategyId)}/versions/${id(hash)}`),
+  saveVersion: (strategyId: string, body: Schemas["VersionRequest"]) =>
+    request<Schemas["SavedVersionOut"]>(`/api/strategies/${id(strategyId)}/versions`, post(body)),
+  forkStrategy: (strategyId: string, name?: string) =>
+    request<Schemas["StrategyOneOut"]>(`/api/strategies/${id(strategyId)}/fork`, post({ name })),
+  updateStrategy: (strategyId: string, body: Schemas["UpdateRequest"]) =>
+    request<Schemas["StrategyOneOut"]>(`/api/strategies/${id(strategyId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteStrategy: (strategyId: string) =>
+    request<void>(`/api/strategies/${id(strategyId)}`, { method: "DELETE" }),
+
+  // -- run history ------------------------------------------------------------
+  runs: (opts: { libraryId?: string; strategyHash?: string; kind?: string; limit?: number } = {}) =>
+    request<Schemas["RunListOut"]>(
+      `/api/runs${query({
+        library_id: opts.libraryId,
+        strategy_hash: opts.strategyHash,
+        kind: opts.kind,
+        limit: opts.limit,
+      })}`,
+    ),
+  run: (runId: string) => request<Schemas["RunOneOut"]>(`/api/runs/${id(runId)}`),
+
+  // -- background jobs --------------------------------------------------------
+  jobs: (activeOnly = false) =>
+    request<Schemas["JobListOut"]>(`/api/jobs${query({ active_only: activeOnly })}`),
+  job: (jobId: string) => request<Schemas["JobOneOut"]>(`/api/jobs/${id(jobId)}`),
+  cancelJob: (jobId: string) =>
+    request<Schemas["JobOneOut"]>(`/api/jobs/${id(jobId)}/cancel`, { method: "POST" }),
+  startBacktestJob: (body: BacktestRequest) =>
+    request<Schemas["JobOneOut"]>("/api/jobs/backtest", post(body)),
+  startFetchJob: (body: FetchRequest) =>
+    request<Schemas["JobOneOut"]>("/api/jobs/fetch", post(body)),
+  /** Server-sent events for one job: "progress" while it runs, "done" once. */
+  jobEvents: (jobId: string) => new EventSource(`/api/jobs/${id(jobId)}/events`),
+
+  // -- data -------------------------------------------------------------------
+  dataPlan: (symbol: string, timeframe: string, start?: string, end?: string) =>
+    request<Schemas["DataPlanResponse"]>(`/api/data/plan${query({ symbol, timeframe, start, end })}`),
+
+  // -- app session ------------------------------------------------------------
+  appSession: () => request<Schemas["AppSessionResponse"]>("/api/app/session"),
+  heartbeat: () => request<Schemas["AppSessionResponse"]>("/api/app/heartbeat", { method: "POST" }),
+  quit: (body: Schemas["QuitRequest"]) => request<Schemas["QuitOut"]>("/api/app/quit", post(body)),
+  pendingSessions: () => request<Schemas["PendingListOut"]>("/api/app/pending"),
+  resolvePending: (sessionId: string, body: Schemas["ResolveRequest"]) =>
+    request<Schemas["ResolveOut"]>(`/api/app/pending/${id(sessionId)}`, post(body)),
 };
 
 export { ApiError };

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
@@ -43,8 +44,13 @@ class SessionManager:
         session_id: str | None = None,
         history_frame=None,
         history_before=None,
+        on_finish: Callable[[PaperSession, BaseException | None], None] | None = None,
     ) -> tuple[PaperSession, bool]:
-        """Start a session. Returns (session, started_now)."""
+        """Start a session. Returns (session, started_now).
+
+        `on_finish(session, error)` runs on the session's thread once it ends,
+        however it ends. It is not called when the session was already running.
+        """
         sid = session_id or make_session_id(config.strategy, config.instrument_key)
 
         with self._lock:
@@ -60,21 +66,30 @@ class SessionManager:
             self._sessions[sid] = session
 
             thread = threading.Thread(
-                target=self._run, args=(sid, session), name=f"session-{sid}", daemon=True
+                target=self._run, args=(sid, session, on_finish), name=f"session-{sid}",
+                daemon=True,
             )
             self._threads[sid] = thread
             thread.start()
 
         return session, True
 
-    def _run(self, sid: str, session: PaperSession) -> None:
+    def _run(self, sid: str, session: PaperSession, on_finish=None) -> None:
+        error: BaseException | None = None
         try:
             session.run()
-        except Exception:
+        except Exception as exc:
             # `PaperSession.run` has already journaled, alerted and marked the
             # session failed. Re-raising off a daemon thread would only kill the
             # thread silently, so log and let the snapshot carry the bad news.
+            error = exc
             log.exception("Session %s ended in error", sid)
+        finally:
+            if on_finish is not None:
+                try:
+                    on_finish(session, error)
+                except Exception:
+                    log.exception("Session %s: finish callback failed", sid)
 
     def stop(self, session_id: str, reason: str = "manual") -> bool:
         with self._lock:
@@ -132,6 +147,48 @@ class SessionManager:
             )
         return out
 
+    def interrupted(self, day: date | None = None) -> list[dict[str, Any]]:
+        """Today's live-feed sessions that were cut off rather than stopped.
+
+        A crash leaves no end record; an app shutdown or Ctrl-C leaves one that
+        still counts as resumable. Either way the session is not running in this
+        process, and starting the same strategy on the same instrument today
+        lands on its journal and resumes it. Replays are not offered: re-running
+        one is a fresh experiment, not a position to look after.
+
+        This only lists them. Resuming is always the user's decision.
+        """
+        prefix = f"{(day or datetime.now(IST).date()):%Y%m%d}-"
+        out = []
+        for sid in J.sessions():
+            if not sid.startswith(prefix) or self.is_running(sid):
+                continue
+            state = J.recover(sid)
+            if not state.resumable or state.source_kind != "live":
+                continue
+            out.append(
+                {
+                    "session_id": sid,
+                    "strategy_name": state.strategy.get("name", "?"),
+                    "symbol": state.symbol,
+                    "timeframe": state.timeframe,
+                    "cause": "app shutdown" if state.ended else "crash",
+                    "bars_seen": state.bars_seen,
+                    "trades": len(state.trades),
+                    "open_legs": state.open_legs,
+                    "last_bar_at": state.last_bar_time.isoformat() if state.last_bar_time else None,
+                    # Everything the start endpoint needs to land on this journal.
+                    "resume": {
+                        "strategy": state.strategy,
+                        "symbol": state.symbol,
+                        "starting_capital": float(state.starting_capital),
+                        "lot_size": state.lot_size,
+                        "source": "live",
+                    },
+                }
+            )
+        return out
+
     def history(self, limit: int = 25) -> list[dict[str, Any]]:
         """Past sessions read off disk, including ones this process never ran."""
         out = []
@@ -145,7 +202,7 @@ class SessionManager:
                 {
                     "session_id": sid,
                     "running": False,
-                    "state": "ended" if state.ended else "interrupted",
+                    "state": "interrupted" if state.resumable else "ended",
                     "strategy": state.strategy.get("name", "?"),
                     "symbol": state.symbol,
                     "timeframe": state.timeframe,

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
-import type { Dataset, LiveSnapshot, SessionRow, Trade } from "./api";
+import type { Dataset, InterruptedSession, LiveSnapshot, SessionRow, Trade } from "./api";
 
 const POLL_MS = 2000;
 
@@ -274,6 +274,7 @@ export function LiveDashboard({ sessionId, onPick }: { sessionId: string | null;
 
   return (
     <div className="live">
+      <InterruptedBanner onResumed={(id) => { refreshList(); onPick(id); }} />
       <SessionList sessions={sessions} current={sessionId} onPick={onPick} />
 
       {error && (
@@ -291,6 +292,64 @@ export function LiveDashboard({ sessionId, onPick }: { sessionId: string | null;
       )}
 
       {snapshot && <SessionView snapshot={snapshot} onStop={stop} stopping={stopping} />}
+    </div>
+  );
+}
+
+// Sessions cut off by a crash or an app shutdown today. Offered, never resumed
+// automatically: the user may have closed the position at the broker by hand,
+// or may simply not want the session back.
+function InterruptedBanner({ onResumed }: { onResumed: (sessionId: string) => void }) {
+  const [sessions, setSessions] = useState<InterruptedSession[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.liveInterrupted().then((r) => setSessions(r.sessions)).catch(() => {});
+  }, []);
+
+  const visible = sessions.filter((s) => !dismissed.has(s.session_id));
+  if (!visible.length) return null;
+
+  const resume = async (s: InterruptedSession) => {
+    setBusy(s.session_id);
+    setError(null);
+    try {
+      const res = await api.liveStart(s.resume);
+      setSessions((all) => all.filter((x) => x.session_id !== s.session_id));
+      onResumed(res.session_id);
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="notice warn">
+      <div className="notice-title">
+        {visible.length === 1 ? "A paper session was" : `${visible.length} paper sessions were`} interrupted today
+      </div>
+      <ul>
+        {visible.map((s) => (
+          <li key={s.session_id}>
+            <b>{s.strategy_name}</b> on {s.symbol.split("|").pop()} · stopped by {s.cause} ·{" "}
+            {s.trades} trades{s.open_legs.length ? `, ${s.open_legs.length} open position(s)` : ""}{" "}
+            <button className="btn tiny" onClick={() => resume(s)} disabled={busy !== null}>
+              {busy === s.session_id ? "Resuming…" : "Resume"}
+            </button>{" "}
+            <button
+              className="btn tiny secondary"
+              onClick={() => setDismissed((d) => new Set(d).add(s.session_id))}
+              disabled={busy !== null}
+            >
+              Dismiss
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error && <div>{error}</div>}
     </div>
   );
 }

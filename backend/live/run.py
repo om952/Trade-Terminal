@@ -19,10 +19,11 @@ import json
 import logging
 import signal
 import sys
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
-from backend.core.config import IST, Mode, settings
+from backend.core.config import IST, Mode
+from backend.core.log_setup import configure_logging
 from backend.live import journal as J
 from backend.live.session import PaperSession, SessionConfig
 from backend.strategy import templates
@@ -48,7 +49,7 @@ def _strategy(args) -> Strategy:
     return templates.load(args.template, symbol=args.symbol, timeframe=args.timeframe)
 
 
-def _config(args, key: str, strategy: Strategy) -> SessionConfig:
+def _config(args, key: str, strategy: Strategy, source_kind: str = "live") -> SessionConfig:
     return SessionConfig(
         strategy=strategy,
         instrument_key=key,
@@ -59,6 +60,7 @@ def _config(args, key: str, strategy: Strategy) -> SessionConfig:
         warmup_bars=args.warmup,
         mode=Mode.PAPER,
         alerts_enabled=not args.no_alerts,
+        source_kind=source_kind,
     )
 
 
@@ -129,7 +131,7 @@ def cmd_replay(args) -> None:
     print(f"Replaying {len(replay):,} bars at "
           f"{'max speed' if not args.speed else f'{args.speed}x'}")
 
-    config = _config(args, key, strategy)
+    config = _config(args, key, strategy, source_kind="replay")
     config.alerts_enabled = False          # a replay must not page you
     session = PaperSession.create(
         config,
@@ -152,7 +154,7 @@ def cmd_sessions(args) -> None:
         state = J.recover(sid)
         if not state.started:
             continue
-        label = "ended" if state.ended else "INTERRUPTED"
+        label = "INTERRUPTED" if state.resumable else "ended"
         print(f"{sid:<46} {label:<12} {state.bars_seen:>7} {len(state.trades):>7}  "
               f"{state.strategy.get('name', '?')}")
 
@@ -167,7 +169,7 @@ def cmd_show(args) -> None:
     print(f"Session   {state.session_id}")
     print(f"Strategy  {state.strategy.get('name', '?')}  ({state.strategy_hash[:12]})")
     print(f"Symbol    {state.symbol}  {state.timeframe}")
-    print(f"State     {'ended' if state.ended else 'INTERRUPTED — resumable'}")
+    print(f"State     {'INTERRUPTED — resumable' if state.resumable else 'ended'}")
     print(f"Bars      {state.bars_seen:,}   last {state.last_bar_time}")
     print(f"Trades    {len(state.trades)}   net {net:+,.2f}   fees {fees:,.2f}")
     if state.open_legs:
@@ -238,11 +240,7 @@ def main() -> None:
     p_show.set_defaults(func=cmd_show)
 
     args = parser.parse_args()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    configure_logging()
     args.func(args)
 
 

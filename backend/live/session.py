@@ -79,6 +79,10 @@ class SessionConfig:
     mode: Mode = Mode.PAPER
     alerts_enabled: bool = True
     flatten_at_session_end: bool = True
+    # Where bars come from: "live" (the broker feed) or "replay" (stored candles).
+    # Journaled so a restarted app knows which interrupted sessions it can offer
+    # to resume.
+    source_kind: str = "live"
 
 
 @dataclass
@@ -210,9 +214,14 @@ class PaperSession:
         try:
             for bar in self.feed.stream():
                 if self._stop.is_set():
-                    reason = self.live.stop_reason or "stopped"
                     break
                 self._on_bar(bar)
+            # `stop()` also stops the source, so the stream usually just ends
+            # rather than yielding one more bar. Either way the session was
+            # stopped, not exhausted: keep the real reason, which decides whether
+            # positions are flattened and whether a restart resumes.
+            if self._stop.is_set():
+                reason = self.live.stop_reason or "stopped"
         except Exception as exc:
             self._fail("loop", exc)
             reason = "error"
@@ -243,7 +252,7 @@ class PaperSession:
         # session already got, and warm-up has to reach that point rather than
         # stopping where the feed's window nominally starts.
         recovered = J.recover(self.journal.session_id, self.journal.path.parent)
-        resuming = recovered.started and not recovered.ended
+        resuming = recovered.resumable
 
         warmup = self.feed.warmup(
             config.instrument_key,
@@ -292,6 +301,7 @@ class PaperSession:
                 "symbol": config.instrument_key,
                 "timeframe": strategy.timeframe,
                 "mode": config.mode.value,
+                "source_kind": config.source_kind,
                 "starting_capital": config.starting_capital,
                 "lot_size": config.lot_size,
                 "slippage_bps": config.slippage_bps,

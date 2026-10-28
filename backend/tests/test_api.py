@@ -22,7 +22,7 @@ from backend.analytics import metrics as M
 from backend.api.main import app
 from backend.data.simulator import generate_ohlcv
 from backend.data.store import write_candles
-from backend.execution.costs import Segment, segment_for
+from backend.execution.costs import segment_for
 from backend.strategy import templates
 from backend.strategy.risk import RiskGuard
 from backend.strategy.runner import FillModel, run_backtest
@@ -31,7 +31,8 @@ from backend.strategy.schema import Strategy
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app)
+    # The API only answers requests addressed to this machine.
+    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture(scope="module")
@@ -91,10 +92,12 @@ def test_unknown_template_404s(client):
     assert client.get("/api/templates/does_not_exist").status_code == 404
 
 
-def test_instrument_search_ranks_exact_match_first(client):
+def test_instrument_search_ranks_exact_match_first(client, instrument_master):
     results = client.get("/api/instruments/search", params={"q": "RELIANCE"}).json()["results"]
     assert results, "instrument master not synced"
     assert results[0]["trading_symbol"] == "RELIANCE"
+    assert results[0]["exchange"] == "NSE"
+    assert results[0]["instrument_type"] == "EQ"
 
 
 def test_datasets_lists_stored_data(client, seeded_dataset):
@@ -458,3 +461,54 @@ def test_live_snapshot_falls_back_to_the_journal(client, seeded_dataset):
 
 def test_unknown_live_session_404s(client):
     assert client.get("/api/live/no-such-session").status_code == 404
+
+
+def test_api_shutdown_stops_sessions_resumably(seeded_dataset):
+    """Stopping the server must end running sessions as 'shutdown', so a restart
+    can offer to resume them, instead of abandoning them mid-write."""
+    import logging
+    import time as _time
+
+    from backend.core import log_setup
+    from backend.live import journal as J
+
+    document = TestClient(app, base_url="http://localhost").get(
+        "/api/templates/ema_crossover"
+    ).json()
+    document["timeframe"] = "5m"
+    document["name"] = "shutdown hook test"  # own hash, so its own journal
+
+    try:
+        # Entering the client runs startup; leaving it runs shutdown.
+        with TestClient(app, base_url="http://localhost") as lifespan_client:
+            started = lifespan_client.post("/api/live/start", json={
+                "strategy": document, "symbol": seeded_dataset, "source": "replay",
+                "replay_start": "2026-01-05", "replay_end": "2026-02-28",
+                "replay_speed": 600, "alerts": False,
+                "starting_capital": 1_000_000, "lot_size": 250,
+            }).json()
+            session_id = started["session_id"]
+            deadline = _time.monotonic() + 30
+            while _time.monotonic() < deadline:
+                snap = lifespan_client.get(
+                    f"/api/live/{session_id}", params={"include_bars": False}
+                ).json()
+                if snap.get("bars_seen", 0) >= 3:
+                    break
+                _time.sleep(0.1)
+            assert snap["running"], "session never got going"
+
+        state = J.recover(session_id)
+        assert state.ended and state.end_reason == "shutdown"
+        assert state.resumable
+    finally:
+        root = logging.getLogger()
+        for handler in list(root.handlers):
+            if isinstance(handler, log_setup._OurHandler):
+                root.removeHandler(handler)
+                handler.close()
+
+
+def test_live_interrupted_endpoint_shape(client):
+    body = client.get("/api/live/interrupted").json()
+    assert isinstance(body["sessions"], list)

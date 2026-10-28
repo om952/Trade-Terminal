@@ -6,6 +6,7 @@ That way there is exactly one place to look when something is misconfigured.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +17,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT = Path(__file__).resolve().parents[2]
 IST = ZoneInfo("Asia/Kolkata")
 
+# Which .env to read. Unset means the repo's .env; an empty string means none at
+# all, which is how the test suite keeps a developer's real secrets and risk
+# limits out of its runs.
+_env_override = os.environ.get("TRADE_TERMINAL_ENV_FILE")
+ENV_FILE: Path | None = (
+    ROOT / ".env" if _env_override is None else (Path(_env_override) if _env_override else None)
+)
+
 
 class Mode(str, Enum):
     BACKTEST = "backtest"
@@ -25,7 +34,7 @@ class Mode(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=ROOT / ".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -73,6 +82,8 @@ class Settings(BaseSettings):
 
     @property
     def parquet_dir(self) -> Path:
+        """Where candle files lived before the partitioned store (read only by the
+        one-time migration in backend.data.store)."""
         return self.data_dir / "parquet"
 
     @property
@@ -97,8 +108,26 @@ class Settings(BaseSettings):
             )
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.parquet_dir, self.journal_dir):
+        for d in (self.data_dir, self.journal_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+
+def insecure_env_file_warning(env_file: Path | None = None) -> str | None:
+    """A warning if the .env file (broker credentials) is readable by other users.
+
+    Reported, not fixed: silently changing permissions on a user's file is worse
+    than telling them the one command that fixes it.
+    """
+    path = env_file if env_file is not None else ENV_FILE
+    if path is None or os.name != "posix" or not path.exists():
+        return None
+    mode = path.stat().st_mode & 0o777
+    if not mode & 0o077:
+        return None
+    return (
+        f"{path} is readable by other users (mode {mode:o}) and holds broker "
+        f"credentials. Fix it with: chmod 600 {path}"
+    )
 
 
 settings = Settings()

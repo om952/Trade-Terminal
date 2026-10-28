@@ -6,7 +6,7 @@ Everything else guards the invariants those two depend on.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -261,6 +261,31 @@ def test_inline_indicator_operand():
     indicators = VectorizedIndicatorSet(df, [], inline)
     indicators.seek(24)
     assert conditions.evaluate(strategy.entry, indicators) is True
+
+
+def _inline_doc(right: dict) -> dict:
+    return {
+        "name": "t", "instrument": {"symbol": "S"},
+        "entry": {"conditions": [{"left": "volume", "cmp": ">", "right": right}]},
+        "legs": [{"id": "l", "action": "BUY"}],
+    }
+
+
+def test_inline_indicator_rejects_misspelled_param():
+    """A typo must fail at load, not as a TypeError when a backtest computes it."""
+    with pytest.raises(ValidationError, match="unknown parameter"):
+        Strategy.model_validate(_inline_doc({"type": "SMA", "of": "volume", "lenght": 20}))
+
+
+def test_inline_indicator_rejects_unknown_input():
+    with pytest.raises(ValidationError, match="input"):
+        Strategy.model_validate(_inline_doc({"type": "SMA", "of": "volumee", "period": 20}))
+
+
+def test_inline_indicator_accepts_declared_indicator_as_input():
+    doc = _inline_doc({"type": "SMA", "of": "rsi", "period": 5})
+    doc["indicators"] = [{"id": "rsi", "type": "RSI", "params": {"period": 14}}]
+    Strategy.model_validate(doc)
 
 
 def test_explain_reports_values(simple_indicators):

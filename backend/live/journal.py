@@ -172,6 +172,12 @@ def sessions(directory: Path | None = None) -> list[str]:
 # Recovery
 # ---------------------------------------------------------------------------
 
+# A session ended for one of these reasons was cut off by its process going
+# away, not finished on purpose, so starting it again resumes it. A manual stop
+# or a failed reconciliation is a real end.
+RESUMABLE_END_REASONS = frozenset({"shutdown", "signal"})
+
+
 @dataclass
 class Recovered:
     """Everything needed to resume a session exactly where it stopped."""
@@ -179,6 +185,8 @@ class Recovered:
     session_id: str
     started: bool = False
     ended: bool = False
+    end_reason: str = ""
+    source_kind: str = ""
     strategy: dict[str, Any] = field(default_factory=dict)
     strategy_hash: str = ""
     symbol: str = ""
@@ -208,6 +216,11 @@ class Recovered:
     def open_legs(self) -> list[str]:
         return [leg for leg, p in self.positions.items() if int(p.get("quantity", 0)) != 0]
 
+    @property
+    def resumable(self) -> bool:
+        """Started, and either never ended (a crash) or cut off by a shutdown."""
+        return self.started and (not self.ended or self.end_reason in RESUMABLE_END_REASONS)
+
 
 def recover(session_id: str, directory: Path | None = None) -> Recovered:
     """Rebuild session state from its journal.
@@ -224,6 +237,10 @@ def recover(session_id: str, directory: Path | None = None) -> Recovered:
         data = record.data
         if record.type is Event.SESSION_START:
             state.started = True
+            # A start after an end is a resume; the earlier end no longer applies.
+            state.ended = False
+            state.end_reason = ""
+            state.source_kind = data.get("source_kind", "")
             state.strategy = data.get("strategy", {})
             state.strategy_hash = data.get("strategy_hash", "")
             state.symbol = data.get("symbol", "")
@@ -251,5 +268,6 @@ def recover(session_id: str, directory: Path | None = None) -> Recovered:
 
         elif record.type is Event.SESSION_END:
             state.ended = True
+            state.end_reason = data.get("reason", "")
 
     return state

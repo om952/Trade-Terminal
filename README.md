@@ -3,7 +3,8 @@
 Automated trading terminal for Indian markets: visual strategy definition, backtesting,
 paper trading, and live broker execution — all running the same engine.
 
-Build plan and architecture: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
+Implementation plan to production: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+Original build plan: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
 
 ## Status
 
@@ -21,10 +22,13 @@ Build plan and architecture: [Terminal Build Order](https://claude.ai/code/artif
 ## Setup
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+uv sync --extra dev       # exact versions from uv.lock, into .venv
 cp .env.example .env      # then fill in UPSTOX_API_KEY / UPSTOX_API_SECRET
+chmod 600 .env            # it holds broker credentials
 ```
+
+Without uv: `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
+(this resolves the newest allowed versions rather than the locked ones).
 
 Create the Upstox app at <https://account.upstox.com/developer/apps>.
 Redirect URL must be `https://127.0.0.1:8000/auth/upstox/callback`.
@@ -52,11 +56,24 @@ python -m backend.data.ingest instruments                # sync contract master
 python -m backend.data.ingest bootstrap --days 365       # starter dataset
 python -m backend.data.ingest fetch NIFTY -t 5m --from 2024-01-01
 python -m backend.data.ingest verify NIFTY -t 5m         # gap check
+python -m backend.data.ingest verify-derivation NIFTY    # do bars built from 1m match Upstox's?
 python -m backend.data.ingest simulate NIFTY -t 5m --days 365 --seed 42
 python -m backend.data.ingest import-csv data.csv --symbol NIFTY -t 1d
 ```
 
 `fetch` resumes from what is already stored, so re-running it is cheap and safe.
+
+Backtests don't need a manual download: the data service
+(`backend/data/service.py`) fetches only the trading sessions a range is
+missing, remembers sessions the broker has no data for, and re-checks recent
+sessions that were stored mid-day. `GET /api/data/plan` shows what a range would
+download, and roughly how long it would take, before anything is fetched.
+
+Setting `derive_intraday_from_1m` downloads only 1-minute bars and builds 3m,
+5m, 15m and hourly bars locally. It is off by default: paper trading reads
+Upstox's native bars, so backtests must see identical ones. Run
+`verify-derivation` on your data first, and turn it on only if it reports
+IDENTICAL.
 
 ### Real vs simulated
 
@@ -141,11 +158,23 @@ trades and P&L exactly, with zero duplicate fills and zero replayed bars.
 A torn final line is the expected signature of a crash, not corruption; the
 reader takes the intact prefix and says so.
 
+Stopping the API server or pressing Ctrl-C ends running sessions as
+interrupted, not finished: positions are left as they are, and starting the
+same strategy again that day resumes it. The Live tab lists interrupted
+sessions with a Resume button; nothing resumes on its own. A Stop from the UI
+is a real end.
+
 
 ## Layout
 
 ```
 backend/
+  app/
+    db.py             app database: SQLite, numbered migrations
+    library.py        saved strategies and their version history
+    runs.py           run history and the trial counter
+    jobs.py           background jobs: progress, cancel
+    preferences.py    per-user settings
   core/
     interfaces.py     DataFeed + Broker protocols — the seam everything hangs off
     config.py         .env loading; the only place secrets are read
@@ -153,7 +182,11 @@ backend/
     upstox_auth.py    OAuth, token cache, expiry health check
     upstox_client.py  REST client: rate limiting, chunking, retries
     instruments.py    contract master sync and lookups
-    store.py          DuckDB metadata + Parquet candles
+    store.py          instrument master (DuckDB); old candle API, legacy migration
+    candles.py        Parquet candles partitioned by instrument, timeframe, month
+    service.py        get_bars(): fetch only what's missing, data plans
+    resample.py       intraday bars built from 1-minute bars
+    fingerprint.py    hashes of the bars a run used
     calendar.py       trading sessions, holidays, gap detection
     simulator.py      GBM + jump-diffusion, Black-Scholes, Greeks
     csv_import.py     external CSV ingestion with validation
@@ -170,10 +203,12 @@ backend/
     alerts.py         Telegram
     run.py            CLI front door
   tests/
-data/
-  parquet/            candle files (gitignored)
-  journal/            live event journal (gitignored)
-  terminal.duckdb     instruments, coverage, metadata (gitignored)
+data/                 everything here is gitignored
+  store/candles/      candles: {timeframe}/{instrument}/{YYYY-MM}.parquet
+  journal/            live event journal
+  logs/               rotating application log
+  app.sqlite          strategies, runs, jobs, preferences, data index
+  terminal.duckdb     instrument master
 ```
 
 ## Running the app
@@ -181,8 +216,12 @@ data/
 Two processes. Backend first:
 
 ```bash
-.venv/bin/uvicorn backend.api.main:app --reload --port 8000
+.venv/bin/uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+The API serves this machine only: requests whose `Host` or `Origin` is not
+`localhost`, `127.0.0.1` or `[::1]` get a 403, which blocks DNS-rebinding and
+drive-by requests from other websites.
 
 Then the UI (proxies /api to port 8000):
 
@@ -193,17 +232,30 @@ cd frontend && npm run dev        # http://localhost:5173
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest backend/tests -q
+.venv/bin/python -m pytest -q     # tests
+.venv/bin/ruff check backend      # lint
+.venv/bin/mypy                    # type check (see the baseline in pyproject.toml)
 ```
 
-No network or broker token required — the suite runs against the simulator.
+CI (`.github/workflows/ci.yml`) runs these on Python 3.12 to 3.14, plus the
+frontend typecheck and build, `pip-audit` and `npm audit`, on every pull
+request and on `main`. After changing dependencies in `pyproject.toml`, run
+`uv lock` and commit `uv.lock`.
 
-**Stop the API server first.** DuckDB permits a single writer process, so the
-suite cannot open the database while uvicorn holds it:
+The frontend's API types (`frontend/src/api-types.ts`) are generated from the
+backend's OpenAPI schema. After changing an endpoint or its models:
 
 ```bash
-pkill -f 'uvicorn backend.api.main'
+.venv/bin/python -m backend.api.openapi_export frontend/openapi.json
+cd frontend && npm run gen:api
 ```
+
+CI fails if the committed schema or types are out of date.
+
+No network or broker token required — the suite runs against the simulator.
+It uses a throwaway data directory and ignores your `.env`
+(`backend/tests/conftest.py`), so it never touches `data/` and can run while the
+API server is up.
 
 ## Regulatory
 

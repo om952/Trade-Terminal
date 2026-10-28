@@ -20,7 +20,7 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 
-from backend.core.config import IST, settings
+from backend.core.log_setup import configure_logging
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
 from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
@@ -31,12 +31,12 @@ DEFAULT_SYMBOLS = ["NIFTY", "BANKNIFTY", "SENSEX"]
 
 
 def _setup_logging(verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(levelname)-7s %(name)s: %(message)s",
+    configure_logging(
+        level=logging.DEBUG if verbose else None,
+        console_format="%(levelname)-7s %(name)s: %(message)s",
+        datefmt=None,
         stream=sys.stdout,
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,49 @@ def cmd_fetch(args) -> int:
     total = write_candles(key, tf, df, source="upstox")
     print(f"  +{len(df):,} bars fetched, {total:,} total stored")
     return 0
+
+
+def cmd_verify_derivation(args) -> int:
+    """Do 5m (etc.) bars built from 1-minute bars match Upstox's own?
+
+    Downloads both for recent sessions straight from Upstox (nothing is stored),
+    builds the requested timeframes from the 1-minute bars, and compares bar by
+    bar. Exit code 0 only if every timeframe is identical, which is the evidence
+    needed before turning on derive_intraday_from_1m.
+    """
+    import json as _json
+
+    from backend.data.resample import compare, derive
+    from backend.data.upstox_client import fetch_candles
+
+    key = inst.resolve(args.symbol)
+    end = date.today() - timedelta(days=1)          # completed sessions only
+    start = end - timedelta(days=args.days)
+    mcx = key.upper().startswith("MCX")
+
+    print(f"Fetching 1m bars for {key}, {start}..{end}")
+    one_minute = fetch_candles(key, "1m", start, end, include_today=False)
+    if one_minute.empty:
+        print("No 1-minute data returned (is your Upstox token valid?).")
+        return 2
+
+    all_identical = True
+    for tf in args.timeframes:
+        native = fetch_candles(key, tf, start, end, include_today=False)
+        report = compare(derive(one_minute, tf, mcx=mcx), native)
+        verdict = "IDENTICAL" if report["identical"] else "DIFFERENT"
+        all_identical &= report["identical"]
+        print(f"  {tf:>4}: {verdict}  {report['bars_compared']:,} bars compared, "
+              f"{report['mismatched_bars']} mismatched, "
+              f"{report['only_in_derived']} only derived, {report['only_in_native']} only native")
+        for example in report["examples"][:3]:
+            print(f"        {_json.dumps(example)}")
+
+    if all_identical:
+        print("\nDerived bars match. Safe to set derive_intraday_from_1m = true.")
+        return 0
+    print("\nDerived bars differ from Upstox's. Keep derive_intraday_from_1m off.")
+    return 1
 
 
 def cmd_simulate(args) -> int:
@@ -241,6 +284,15 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("symbol")
     sp.add_argument("--timeframe", "-t", default="5m")
     sp.set_defaults(func=cmd_verify)
+
+    sp = sub.add_parser(
+        "verify-derivation",
+        help="check that bars built from 1-minute data match Upstox's native bars",
+    )
+    sp.add_argument("symbol")
+    sp.add_argument("--timeframes", nargs="*", default=["3m", "5m", "15m", "30m", "1h"])
+    sp.add_argument("--days", type=int, default=30, help="calendar days of history to compare")
+    sp.set_defaults(func=cmd_verify_derivation)
 
     sp = sub.add_parser("import-csv", help="import candles from a CSV file")
     sp.add_argument("path")

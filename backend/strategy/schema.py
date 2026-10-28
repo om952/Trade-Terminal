@@ -21,7 +21,7 @@ import json
 import re
 from datetime import time
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -150,9 +150,18 @@ class InlineIndicator(BaseModel):
     @model_validator(mode="after")
     def _check_registry(self) -> InlineIndicator:
         try:
-            registry.get(self.type)
+            spec = registry.get(self.type)
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
+
+        # Extra keys are the parameters, so a misspelled one would otherwise be
+        # accepted here and only fail as a TypeError once a backtest computes it.
+        unknown = set(self.params) - set(spec.params)
+        if unknown:
+            raise ValueError(
+                f"Inline {self.type}: unknown parameter(s) {sorted(unknown)}. "
+                f"Valid: {sorted(spec.params)}"
+            )
         return self
 
     @property
@@ -180,6 +189,9 @@ class Condition(BaseModel):
                 out.add(side)
         return out
 
+    def inline_indicators(self) -> list[InlineIndicator]:
+        return [side for side in (self.left, self.right) if isinstance(side, InlineIndicator)]
+
 
 class ConditionGroup(BaseModel):
     """A boolean tree. Nests arbitrarily so the UI can build compound logic."""
@@ -194,6 +206,9 @@ class ConditionGroup(BaseModel):
         for c in self.conditions:
             out |= c.referenced_ids()
         return out
+
+    def inline_indicators(self) -> list[InlineIndicator]:
+        return [i for c in self.conditions for i in c.inline_indicators()]
 
 
 ConditionGroup.model_rebuild()
@@ -400,6 +415,17 @@ class Strategy(BaseModel):
                 f"Condition references unknown name(s) {sorted(unknown)}. "
                 f"Declare them in `indicators`, or use a price field "
                 f"({', '.join(sorted(PRICE_FIELDS))})."
+            )
+
+        # An inline indicator's input (`of`) must resolve the same way.
+        inline = self.entry.inline_indicators() + (
+            self.exit.inline_indicators() if self.exit else []
+        )
+        bad_inputs = {i.of for i in inline if i.of not in known}
+        if bad_inputs:
+            raise ValueError(
+                f"Inline indicator input(s) {sorted(bad_inputs)} are unknown. "
+                f"Use a price field ({', '.join(sorted(PRICE_FIELDS))}) or a declared indicator."
             )
 
         # ATR-based exits must point at a real ATR indicator.

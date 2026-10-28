@@ -181,7 +181,7 @@ class LiveFeed:
         neither the pre-gap one nor the post-gap one — so a stale store has to be
         repaired before it is used, not merely warned about.
         """
-        from backend.data.store import read_candles, write_candles
+        from backend.data.store import read_candles, write_download
         from backend.data.upstox_client import fetch_candles
 
         today = datetime.now(IST).date()
@@ -213,7 +213,7 @@ class LiveFeed:
         if fresh.empty:
             return stored
 
-        write_candles(self.instrument_key, self.tf.label, fresh, source="upstox")
+        write_download(self.instrument_key, self.tf.label, fresh)
         return read_candles(self.instrument_key, self.tf.label)
 
     def _today(self) -> pd.DataFrame:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -191,11 +192,15 @@ def fetch_candles(
     from_date: date,
     to_date: date | None = None,
     include_today: bool = True,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Fetch a full range, chunking as needed. This is the function to call.
 
     Clamps `from_date` to the earliest date Upstox actually serves for the unit,
     so asking for 1-minute data from 2015 returns 2022-onward rather than an error.
+
+    `on_progress(done, total)` is called before each chunk request. It may raise
+    to abandon the fetch (how a background job is cancelled).
     """
     tf = Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe
     today = pd.Timestamp.now(tz=IST).date()
@@ -215,8 +220,11 @@ def fetch_candles(
     cursor = from_date
     chunks = 0
     failed: list[tuple[date, date, str]] = []
+    total_chunks = (to_date - from_date).days // span + 1
 
     while cursor <= to_date:
+        if on_progress is not None:
+            on_progress(chunks, total_chunks)
         chunk_end = min(cursor + timedelta(days=span - 1), to_date)
         try:
             df = fetch_chunk(instrument_key, tf, cursor, chunk_end)
@@ -254,17 +262,25 @@ def fetch_candles(
             # historical range is still valid, so this must not fail the fetch.
             log.debug("Intraday fetch skipped: %s", exc)
 
+    # Callers that remember "no data for this session" must not do so for a
+    # window that merely failed, so the failed windows travel with the result.
+    failed_ranges = [(a, b) for a, b, _ in failed]
+
     if not frames:
         log.warning("No data for %s %s (%s..%s) across %d chunks",
                     instrument_key, tf.label, from_date, to_date, chunks)
-        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        empty = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        empty.attrs["failed_ranges"] = failed_ranges
+        return empty
 
     out = pd.concat(frames, ignore_index=True)
     out = out.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
     log.info("%s %s: %d bars (%s..%s) in %d calls",
              instrument_key, tf.label, len(out),
              out["timestamp"].iloc[0].date(), out["timestamp"].iloc[-1].date(), chunks)
-    return out.reset_index(drop=True)
+    out = out.reset_index(drop=True)
+    out.attrs["failed_ranges"] = failed_ranges
+    return out
 
 
 def profile() -> dict:

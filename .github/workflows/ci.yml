@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      - name: Install from the lockfile
+        run: uv sync --locked --extra dev
+
+      - name: Lint
+        run: uv run --frozen ruff check backend
+
+      - name: Type check
+        run: uv run --frozen mypy
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+      # The suite runs against a throwaway data dir (backend/tests/conftest.py).
+      # If it ever writes into the repo's data/ folder again, fail loudly.
+      - name: Tests left data/ untouched
+        run: test ! -e data || { echo "::error::the test suite wrote into data/"; exit 1; }
+
+      - name: Dependency audit
+        if: matrix.python == '3.13'
+        run: uv run --frozen pip-audit --skip-editable
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+  # The frontend's API types are generated from the backend's OpenAPI schema.
+  # Fail if either committed file is out of date.
+  api-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: uv sync --locked --extra dev
+
+      - name: Export the OpenAPI schema
+        run: uv run --frozen python -m backend.api.openapi_export frontend/openapi.json
+
+      - name: Generate TypeScript types
+        working-directory: frontend
+        run: npm ci && npm run gen:api
+
+      - name: Committed schema and types are current
+        run: |
+          git diff --exit-code -- frontend/openapi.json frontend/src/api-types.ts || {
+            echo "::error::API types are stale. Run: python -m backend.api.openapi_export frontend/openapi.json && (cd frontend && npm run gen:api), then commit."
+            exit 1
+          }
