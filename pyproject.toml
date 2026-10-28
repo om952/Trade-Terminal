@@ -44,6 +44,7 @@ exclude = ["backend.tests*"]
 
 [tool.setuptools.package-data]
 "backend.live.proto" = ["*.proto"]
+"backend.app" = ["migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
