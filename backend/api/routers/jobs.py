@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from backend.api import schemas as S
 from backend.api.deps import current_context
 from backend.api.routers.backtest import BacktestRequest, execute_backtest
 from backend.api.routers.data import FetchRequest, execute_fetch
@@ -32,7 +33,7 @@ def _get(job_id: str, ctx: AppContext) -> JobRecord:
         raise HTTPException(404, str(exc)) from exc
 
 
-@router.get("/api/jobs")
+@router.get("/api/jobs", response_model=S.JobListOut)
 def list_jobs(
     active_only: bool = False,
     limit: int = Query(default=50, ge=1, le=500),
@@ -43,12 +44,12 @@ def list_jobs(
     return {"jobs": [j.to_dict() | {"result": None} for j in jobs]}
 
 
-@router.get("/api/jobs/{job_id}")
+@router.get("/api/jobs/{job_id}", response_model=S.JobOneOut)
 def get_job(job_id: str, ctx: AppContext = Depends(current_context)) -> dict:
     return {"job": _get(job_id, ctx).to_dict()}
 
 
-@router.post("/api/jobs/{job_id}/cancel")
+@router.post("/api/jobs/{job_id}/cancel", response_model=S.JobOneOut)
 def cancel_job(job_id: str, ctx: AppContext = Depends(current_context)) -> dict:
     _get(job_id, ctx)
     return {"job": get_runner().cancel(job_id, ctx).to_dict()}
@@ -77,7 +78,7 @@ async def job_events(job_id: str, ctx: AppContext = Depends(current_context)) ->
                              headers={"Cache-Control": "no-cache"})
 
 
-@router.post("/api/jobs/backtest", status_code=202)
+@router.post("/api/jobs/backtest", status_code=202, response_model=S.JobOneOut)
 def start_backtest_job(req: BacktestRequest, ctx: AppContext = Depends(current_context)) -> dict:
     # The first half of the bar is the download (if any), the second the backtest.
     def work(job: JobHandle) -> dict:
@@ -96,7 +97,7 @@ def start_backtest_job(req: BacktestRequest, ctx: AppContext = Depends(current_c
     return {"job": get_runner().get(job_id, ctx).to_dict()}
 
 
-@router.post("/api/jobs/fetch", status_code=202)
+@router.post("/api/jobs/fetch", status_code=202, response_model=S.JobOneOut)
 def start_fetch_job(req: FetchRequest, ctx: AppContext = Depends(current_context)) -> dict:
     def work(job: JobHandle) -> dict:
         return execute_fetch(

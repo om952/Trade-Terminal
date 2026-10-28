@@ -9,6 +9,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.api import schemas as S
 from backend.api.deps import current_context
 from backend.app.context import AppContext
 from backend.data.calendar import find_gaps
@@ -128,7 +129,7 @@ def execute_fetch(
     }
 
 
-@router.get("/api/data/plan")
+@router.get("/api/data/plan", response_model=S.DataPlanResponse)
 def data_plan(
     symbol: str,
     timeframe: str = "5m",

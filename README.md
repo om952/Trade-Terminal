@@ -242,6 +242,16 @@ frontend typecheck and build, `pip-audit` and `npm audit`, on every pull
 request and on `main`. After changing dependencies in `pyproject.toml`, run
 `uv lock` and commit `uv.lock`.
 
+The frontend's API types (`frontend/src/api-types.ts`) are generated from the
+backend's OpenAPI schema. After changing an endpoint or its models:
+
+```bash
+.venv/bin/python -m backend.api.openapi_export frontend/openapi.json
+cd frontend && npm run gen:api
+```
+
+CI fails if the committed schema or types are out of date.
+
 No network or broker token required — the suite runs against the simulator.
 It uses a throwaway data directory and ignores your `.env`
 (`backend/tests/conftest.py`), so it never touches `data/` and can run while the

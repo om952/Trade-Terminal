@@ -17,6 +17,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.api import schemas as S
 from backend.api.deps import current_context
 from backend.app.app_session import get_app_sessions
 from backend.app.context import AppContext
@@ -45,20 +46,20 @@ class ResolveRequest(BaseModel):
     remember: bool = False
 
 
-@router.get("/api/app/session")
+@router.get("/api/app/session", response_model=S.AppSessionResponse)
 def app_session(ctx: AppContext = Depends(current_context)) -> dict:
     """The current app session: what it has downloaded, and the retention preference."""
     return {"session": get_app_sessions(ctx).info()}
 
 
-@router.post("/api/app/heartbeat")
+@router.post("/api/app/heartbeat", response_model=S.AppSessionResponse)
 def heartbeat(ctx: AppContext = Depends(current_context)) -> dict:
     sessions = get_app_sessions(ctx)
     sessions.heartbeat()
     return {"session": sessions.info()}
 
 
-@router.post("/api/app/quit")
+@router.post("/api/app/quit", response_model=S.QuitOut)
 def quit_app(req: QuitRequest, ctx: AppContext = Depends(current_context)) -> dict:
     from backend.live.manager import manager
 
@@ -71,13 +72,13 @@ def quit_app(req: QuitRequest, ctx: AppContext = Depends(current_context)) -> di
     return {**result, "stopped_paper_sessions": running, "exiting": req.exit}
 
 
-@router.get("/api/app/pending")
+@router.get("/api/app/pending", response_model=S.PendingListOut)
 def pending(ctx: AppContext = Depends(current_context)) -> dict:
     """Earlier sessions whose downloaded data is waiting for keep or discard."""
     return {"pending": get_app_sessions(ctx).pending()}
 
 
-@router.post("/api/app/pending/{session_id}")
+@router.post("/api/app/pending/{session_id}", response_model=S.ResolveOut)
 def resolve_pending(session_id: str, req: ResolveRequest,
                     ctx: AppContext = Depends(current_context)) -> dict:
     try:

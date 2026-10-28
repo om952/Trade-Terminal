@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.api.common import _format_validation_error
+from backend.api import schemas as S
 from backend.api.deps import current_context
 from backend.app.context import AppContext
 from backend.app.library import StrategyLibrary
@@ -90,7 +91,7 @@ class UpdateRequest(BaseModel):
     archived: bool | None = None
 
 
-@router.get("/api/strategies")
+@router.get("/api/strategies", response_model=S.StrategyListOut)
 def list_strategies(
     include_archived: bool = False,
     include_templates: bool = True,
@@ -101,14 +102,14 @@ def list_strategies(
         include_archived=include_archived, include_templates=include_templates)]}
 
 
-@router.post("/api/strategies", status_code=201)
+@router.post("/api/strategies", status_code=201, response_model=S.StrategyOneOut)
 def create_strategy(req: SaveRequest, ctx: AppContext = Depends(current_context)) -> dict:
     strategy = _parse(req.document)
     record = _library(ctx).create(strategy, req.source, name=req.name, note=req.note)
     return {"strategy": record.to_dict()}
 
 
-@router.get("/api/strategies/{strategy_id}")
+@router.get("/api/strategies/{strategy_id}", response_model=S.StrategyDetailOut)
 def get_strategy(strategy_id: str, ctx: AppContext = Depends(current_context)) -> dict:
     library = _library(ctx)
     record = library.get(strategy_id)
@@ -119,18 +120,20 @@ def get_strategy(strategy_id: str, ctx: AppContext = Depends(current_context)) -
     }
 
 
-@router.get("/api/strategies/{strategy_id}/versions")
+@router.get("/api/strategies/{strategy_id}/versions", response_model=S.VersionListOut)
 def list_versions(strategy_id: str, ctx: AppContext = Depends(current_context)) -> dict:
     versions = _library(ctx).versions(strategy_id)
     return {"versions": [v.to_dict(include_document=False) for v in versions]}
 
 
-@router.get("/api/strategies/{strategy_id}/versions/{content_hash}")
+@router.get("/api/strategies/{strategy_id}/versions/{content_hash}",
+            response_model=S.VersionOneOut)
 def get_version(strategy_id: str, content_hash: str, ctx: AppContext = Depends(current_context)) -> dict:
     return {"version": _library(ctx).version(strategy_id, content_hash).to_dict()}
 
 
-@router.post("/api/strategies/{strategy_id}/versions", status_code=201)
+@router.post("/api/strategies/{strategy_id}/versions", status_code=201,
+             response_model=S.SavedVersionOut)
 def save_version(strategy_id: str, req: VersionRequest, ctx: AppContext = Depends(current_context)) -> dict:
     strategy = _parse(req.document)
     library = _library(ctx)
@@ -138,12 +141,13 @@ def save_version(strategy_id: str, req: VersionRequest, ctx: AppContext = Depend
     return {"strategy": library.get(strategy_id).to_dict(), "version": version.to_dict()}
 
 
-@router.post("/api/strategies/{strategy_id}/fork", status_code=201)
+@router.post("/api/strategies/{strategy_id}/fork", status_code=201,
+             response_model=S.StrategyOneOut)
 def fork_strategy(strategy_id: str, req: ForkRequest, ctx: AppContext = Depends(current_context)) -> dict:
     return {"strategy": _library(ctx).fork(strategy_id, name=req.name).to_dict()}
 
 
-@router.patch("/api/strategies/{strategy_id}")
+@router.patch("/api/strategies/{strategy_id}", response_model=S.StrategyOneOut)
 def update_strategy(strategy_id: str, req: UpdateRequest, ctx: AppContext = Depends(current_context)) -> dict:
     library = _library(ctx)
     if req.name is not None:
@@ -162,7 +166,7 @@ def delete_strategy(strategy_id: str, ctx: AppContext = Depends(current_context)
 # Run history
 # ---------------------------------------------------------------------------
 
-@router.get("/api/runs")
+@router.get("/api/runs", response_model=S.RunListOut)
 def list_runs(
     library_id: str | None = None,
     strategy_hash: str | None = None,
@@ -175,7 +179,7 @@ def list_runs(
     return {"runs": [r.to_dict() for r in runs]}
 
 
-@router.get("/api/runs/{run_id}")
+@router.get("/api/runs/{run_id}", response_model=S.RunOneOut)
 def get_run(run_id: str, ctx: AppContext = Depends(current_context)) -> dict:
     try:
         return {"run": RunStore(ctx).get(run_id).to_dict()}
