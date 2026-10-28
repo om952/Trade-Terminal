@@ -21,6 +21,15 @@ A trader installs Trade Terminal on their own machine and can, without writing J
 
 Everything else in the product (templates, the visual builder, the strategy library, alerts, the data manager, later the screener and research agent) serves that loop.
 
+### Scope: local app first, hosted version later (decided 2026-10-28)
+
+Phases 0 to 7 build the local app each trader installs. A hosted, multi-user version (accounts, subscriptions, server-side execution, comparable to platforms such as Rapfin Autopilot) comes afterwards as Phase 8. To keep that path open without paying for it now, Phase 1 onward follows four rules:
+
+1. **Every app-state row has an owner.** Tables carry a `user_id` column that is always `"local"` in the local app, so the hosted version is a data migration, not a schema redesign.
+2. **No per-user state in module globals.** Paths, settings and caches are reached through a context object that today wraps the single local user.
+3. **One auth seam in the API.** Every router takes the current user from a single dependency, which returns the local user now and a logged-in user later.
+4. **Storage and jobs behind interfaces.** The data service, the job runner and the app database are used through small interfaces, so hosted deployments can swap in server-grade backends (Postgres, a task queue, object storage) without touching callers.
+
 ### Product principles
 
 - **The engine stays the source of truth.** The language model writes a strategy document; it never computes P&L, never invents metrics, and never sits in the order path.
@@ -268,6 +277,7 @@ Estimates are part-time weeks at the pace of the earlier plans; re-estimate at e
 | **5** Screener and MCP | Multi-instrument scans, local MCP server | 3 to 5 | |
 | **6** Research and portfolio | Variant research with honest selection, momentum rotation | 5 to 7 | **M3** |
 | **7** Live trading | Real orders behind approvals and risk limits | 6+ | **M4** |
+| **8** Hosted version | Accounts, billing, multi-user execution | to scope | |
 
 Roughly **10 to 13 weeks to M1** and **14 to 19 weeks to M2**.
 
@@ -376,6 +386,16 @@ Don't start until a beta trader has confirmed what "screener" means.
 
 **Gate:** all drills pass; daily reconciliation runs clean; 20 shadow sessions agree at order level; then the 2-week one-lot run.
 
+### Phase 8: Hosted version (after the local app; to be scoped)
+
+Outline only; it gets a detailed plan once M2 is reached and the local app has real users.
+
+- Accounts and login, per-user data isolation (the `user_id` columns from Phase 1), Postgres and object storage behind the Phase 1 interfaces.
+- Subscriptions and billing, with plans priced on live-strategy capacity.
+- Server-side execution: a scheduler and workers per live strategy, per-user broker connections and daily token handling, orders routed through a registered static IP.
+- Operations: monitoring, alerting, backups, incident runbooks, uptime targets.
+- **Regulatory gate before any hosted live trading:** algo-provider empanelment with the exchanges and broker integration under SEBI's retail algo framework, confirmed by a lawyer. Keep AI market calls and trade signals out of the product, so it stays on the software side of the advice line.
+
 ---
 
 ## 8. Work by track
@@ -415,11 +435,12 @@ Recommended options are listed first.
 Already decided (2026-10-25): an app session ends on Quit or after 30 minutes with no UI connected and no paper session; the default preference is *Ask every time* with a *Remember my preference* checkbox; resumable conversation checkpoints are kept 15 days and readable chats forever.
 
 
-1. **Distribution:** a local-first app each trader installs (recommended; keeps their data and broker keys on their machine and keeps the regulatory picture simplest), or a hosted multi-user service (needs auth, per-user broker routing, and very likely algo-provider obligations).
-2. **"Production-ready" target:** M2 (recommended) or M4.
-3. **LLM billing for beta:** bring your own key (recommended) or a bundled key.
-4. **Upstox Plus** for expired option data: decided by the P0.10 spike.
-5. **Hours per week:** all estimates assume the earlier plans' part-time pace.
+Also decided (2026-10-28): local app first, hosted version later (Phase 8).
+
+1. **"Production-ready" target:** M2 (recommended) or M4.
+2. **LLM billing for beta:** bring your own key (recommended) or a bundled key.
+3. **Upstox Plus** for expired option data: decided by the P0.10 spike.
+4. **Hours per week:** all estimates assume the earlier plans' part-time pace.
 
 ---
 
