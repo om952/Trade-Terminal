@@ -307,6 +307,13 @@ Roughly **10 to 13 weeks to M1** and **14 to 19 weeks to M2**.
 
 ### Phase 1: Platform foundation (3 to 4 weeks)
 
+**Status 2026-10-28: done, with three items moved and one check left for you.**
+
+- Built: app database with migrations and `user_id` everywhere (P1.1), job runner with progress, cancel and SSE (P1.2), data service with gap-aware fetching, no-data memory, data plans and a month-partitioned store (P1.3), app sessions with the keep/discard/ask cache, idle timeout and crash recovery (P1.4), strategy library, run history and trial counter (P1.5), routers, one identity seam, response models and generated TypeScript types checked in CI (P1.6).
+- Moved to the Phase 3 data manager: the library size cap and journal compaction on discard. Moved to Phase 2: conversations (the tables exist; the feature arrives with the agent).
+- Your check: `python -m backend.data.ingest verify-derivation NIFTY` on a machine with an Upstox token. Building bars from 1-minute data stays off until it reports IDENTICAL.
+- Gate results: quitting with *Discard* leaves no file; *Keep* reuses data with zero downloads next session; a second strategy in one session downloads nothing; a backtest job matches the direct backtest exactly; parity, crash-recovery and lookahead tests are green (484 tests). Real Upstox downloads were exercised only through a fake broker here.
+
 - **P1.1 App database.** SQLite in WAL mode with versioned migrations. Tables: `strategies`, `strategy_versions` (content hash, parent hash, spec JSON, provenance), `app_sessions` (started, ended, how it ended, scratch size, outcome), `preferences` (retention preference, idle timeout), `conversations` and `messages` (permanent history, full-text search), `runs` (strategy hash, kind, params, data fingerprint, metrics, status), `jobs`, `llm_calls`, `data_coverage`, `cache_index`, plus LangGraph checkpoint tables. Coverage metadata moves from DuckDB to SQLite; DuckDB becomes an in-process, read-mostly analytics engine over Parquet, which removes the single-writer conflict.
 - **P1.2 Job runner.** Background jobs for fetch, backtest and (later) sweeps and scans: job ID, progress, ETA, cancel, result pointer. Progress streams to the UI over SSE. Long work leaves the request threads (finding 6). The MCP server in Phase 5 reuses it.
 - **P1.3 Data service.** `get_bars()` as the single entry point, per §4.4: base-timeframe downloads only, local derivation, gap-aware fetch, holiday memory, data plan with size and ETA, fingerprints. Parquet partitioned by instrument, base timeframe and month (sized for the option-contract volume P4.3 may bring). Migrate existing per-timeframe files.
