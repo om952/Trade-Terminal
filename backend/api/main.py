@@ -15,6 +15,7 @@ Run (local only; requests with a non-local Host or Origin are rejected):
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -40,6 +41,19 @@ async def lifespan(_app: FastAPI):
     if abandoned:
         log.warning("%d background job(s) were interrupted by the last shutdown", abandoned)
 
+    from backend.app.app_session import get_app_sessions
+
+    app_sessions = get_app_sessions()
+    app_sessions.begin()
+    pending = app_sessions.pending()
+    if pending:
+        log.warning("%d earlier app session(s) left downloaded data waiting for keep or "
+                    "discard", len(pending))
+    idle_stop = threading.Event()
+    idle_thread = threading.Thread(target=_watch_idle, args=(idle_stop,), name="idle-watch",
+                                   daemon=True)
+    idle_thread.start()
+
     interrupted = manager.interrupted()
     if interrupted:
         # Never resumed automatically: the user may have closed the position by
@@ -52,8 +66,29 @@ async def lifespan(_app: FastAPI):
     log.info("Trade Terminal API started (data dir %s)", settings.data_dir)
     yield
     log.info("Shutting down: stopping running sessions and jobs")
+    idle_stop.set()
     manager.stop_all("shutdown")
     shutdown_runner()
+    # Already ended if the trader quit from the UI; otherwise apply the preference
+    # (or leave the data pending for the next start).
+    app_sessions.end("shutdown")
+
+
+# How often the idle rule is checked.
+IDLE_CHECK_S = 60.0
+
+
+def _watch_idle(stop: threading.Event) -> None:
+    """End the app session after `idle_minutes` with no UI and no paper session."""
+    from backend.app.app_session import get_app_sessions
+    from backend.live.manager import manager
+
+    while not stop.wait(IDLE_CHECK_S):
+        try:
+            running = any(s["running"] for s in manager.active())
+            get_app_sessions().check_idle(paper_running=running)
+        except Exception:
+            log.exception("Idle check failed")
 
 
 app = FastAPI(
@@ -83,8 +118,9 @@ async def _library_error(_request: Request, exc: LibraryError) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=status)
 
 
+from backend.api.routers import app as app_router  # noqa: E402
 from backend.api.routers import backtest, data, jobs, live, reference, strategies  # noqa: E402
 
 for _router in (reference.router, data.router, strategies.router, backtest.router,
-                jobs.router, live.router):
+                jobs.router, live.router, app_router.router):
     app.include_router(_router)

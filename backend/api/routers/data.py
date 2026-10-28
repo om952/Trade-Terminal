@@ -45,6 +45,9 @@ def datasets() -> dict:
             "last_bar": str(r.last_bar)[:19],
             "source": r.source,
             "synthetic": r.source == "simulated",
+            # Kept in the local library, or only cached for this app session.
+            "kept": bool(r.in_library),
+            "session_only": bool(r.in_session and not r.in_library),
         })
     return {"datasets": rows}
 

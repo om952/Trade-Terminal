@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "CANDLE_COLUMNS", "all_coverage", "close_db", "delete_candles", "get_db",
     "migrate_legacy_candles", "read_candles", "read_coverage", "stored_instruments",
-    "write_candles",
+    "write_candles", "write_download",
 ]
 
 _db: duckdb.DuckDBPyConnection | None = None
@@ -126,17 +126,31 @@ def _library():
     return library_store()
 
 
+def _service():
+    from backend.data.service import DataService
+
+    _ensure_migrated()
+    return DataService()
+
+
 def write_candles(
     instrument_key: str,
     timeframe: str,
     df: pd.DataFrame,
     source: str = "upstox",
 ) -> int:
-    """Merge bars into the kept library. Returns total bar count after the merge.
+    """Merge bars into the kept library (simulated data, imports, CLI downloads).
+    Returns total bar count after the merge. Idempotent.
 
-    Idempotent: writing the same data twice leaves the series unchanged.
+    Bars downloaded by the running app belong in `write_download` instead, which
+    honours the app session's keep/discard choice.
     """
     return _library().write(instrument_key, timeframe, df, source)
+
+
+def write_download(instrument_key: str, timeframe: str, df: pd.DataFrame) -> int:
+    """Store broker bars where the current app session keeps downloads."""
+    return _service().write_download(instrument_key, timeframe, df)
 
 
 def read_candles(
@@ -145,32 +159,50 @@ def read_candles(
     start: date | datetime | None = None,
     end: date | datetime | None = None,
 ) -> pd.DataFrame:
-    """Read bars for a range. Returns an empty canonical frame if nothing stored."""
-    return _library().read(instrument_key, timeframe, start, end)
+    """Bars for a range from the library and this app session's cache. Empty
+    canonical frame if nothing is stored. Never downloads."""
+    return _service().read_stored(instrument_key, timeframe, start, end)
+
+
+def _merged_series(timeframe: str | None = None, instrument_key: str | None = None):
+    """Series across the library and the session cache, one entry per series."""
+    merged: dict[tuple[str, str], dict] = {}
+    for store in _service().read_stores:
+        for info in store.all_series(timeframe):
+            if instrument_key is not None and info.instrument_key != instrument_key:
+                continue
+            key = (info.instrument_key, info.timeframe)
+            entry = merged.setdefault(key, {
+                "instrument_key": info.instrument_key, "timeframe": info.timeframe,
+                "first_bar": info.first_bar, "last_bar": info.last_bar, "bar_count": 0,
+                "updated_at": info.updated_at, "source": info.source,
+                "in_library": False, "in_session": False,
+            })
+            # The cache only ever holds sessions the library lacks, so counts add up.
+            entry["bar_count"] += info.rows
+            entry["first_bar"] = min(entry["first_bar"], info.first_bar)
+            entry["last_bar"] = max(entry["last_bar"], info.last_bar)
+            entry["updated_at"] = max(entry["updated_at"], info.updated_at)
+            entry["in_library" if store.name == "library" else "in_session"] = True
+    return [merged[k] for k in sorted(merged)]
+
+
+def _timestamps(entry: dict) -> dict:
+    return {**entry,
+            "first_bar": pd.Timestamp(entry["first_bar"]).tz_convert(IST),
+            "last_bar": pd.Timestamp(entry["last_bar"]).tz_convert(IST),
+            "updated_at": pd.Timestamp(entry["updated_at"])}
 
 
 def read_coverage(instrument_key: str, timeframe: str) -> dict:
-    info = _library().info(instrument_key, timeframe)
-    if info is None:
-        return {}
-    return {
-        "first_bar": pd.Timestamp(info.first_bar).tz_convert(IST),
-        "last_bar": pd.Timestamp(info.last_bar).tz_convert(IST),
-        "bar_count": info.rows,
-        "updated_at": pd.Timestamp(info.updated_at),
-        "source": info.source,
-    }
+    found = _merged_series(timeframe, instrument_key)
+    return _timestamps(found[0]) if found else {}
 
 
 def all_coverage() -> pd.DataFrame:
     columns = ["instrument_key", "timeframe", "first_bar", "last_bar", "bar_count",
-               "updated_at", "source"]
-    rows = [
-        (i.instrument_key, i.timeframe, pd.Timestamp(i.first_bar).tz_convert(IST),
-         pd.Timestamp(i.last_bar).tz_convert(IST), i.rows, pd.Timestamp(i.updated_at), i.source)
-        for i in _library().all_series()
-    ]
-    return pd.DataFrame(rows, columns=columns)
+               "updated_at", "source", "in_library", "in_session"]
+    return pd.DataFrame([_timestamps(e) for e in _merged_series()], columns=columns)
 
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:
@@ -178,7 +210,7 @@ def delete_candles(instrument_key: str, timeframe: str) -> None:
 
 
 def stored_instruments(timeframe: str | None = None) -> list[tuple[str, str]]:
-    return [(i.instrument_key, i.timeframe) for i in _library().all_series(timeframe)]
+    return [(e["instrument_key"], e["timeframe"]) for e in _merged_series(timeframe)]
 
 
 # ---------------------------------------------------------------------------

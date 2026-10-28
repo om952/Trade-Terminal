@@ -136,11 +136,16 @@ class DataService:
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self.ctx = ctx or AppContext.local()
-        library = library_store(self.ctx)
-        self.write_store = write_store or library
-        self.read_stores = read_stores or [self.write_store]
+        if read_stores is None and write_store is None:
+            # The library, plus this app session's scratch cache when one is open
+            # (downloads then land in scratch unless the trader keeps everything).
+            from backend.app.app_session import download_stores
+
+            read_stores, write_store = download_stores(self.ctx)
+        self.write_store = write_store or library_store(self.ctx)
+        self.read_stores = list(read_stores or [self.write_store])
         if self.write_store not in self.read_stores:
-            self.read_stores = [*self.read_stores, self.write_store]
+            self.read_stores.append(self.write_store)
         self._fetcher = fetcher
         self._now = now or (lambda: datetime.now(IST))
         self._today = today or (lambda: self._now().date())
@@ -277,13 +282,22 @@ class DataService:
         """
         plan = self.plan(instrument_key, timeframe, start, end)
         report = self.ensure(plan, on_progress) if fetch else FetchReport()
-        frames = [s.read(instrument_key, plan.fetch_timeframe, plan.start, plan.end)
-                  for s in self.read_stores]
-        frames = [f for f in frames if not f.empty]
-        df = normalize(pd.concat(frames, ignore_index=True)) if frames else empty_frame()
+        df = self.read_stored(instrument_key, plan.fetch_timeframe, plan.start, plan.end)
         if plan.fetch_timeframe != timeframe and not df.empty:
             df = derive(df, timeframe, mcx=is_mcx(instrument_key))
         return df, plan, report
+
+    def read_stored(self, instrument_key: str, timeframe: str,
+                    start: date | datetime | None = None,
+                    end: date | datetime | None = None) -> pd.DataFrame:
+        """What the stores hold for the range, merged, without planning or fetching."""
+        frames = [s.read(instrument_key, timeframe, start, end) for s in self.read_stores]
+        frames = [f for f in frames if not f.empty]
+        return normalize(pd.concat(frames, ignore_index=True)) if frames else empty_frame()
+
+    def write_download(self, instrument_key: str, timeframe: str, df: pd.DataFrame) -> int:
+        """Store bars downloaded from the broker where this session keeps downloads."""
+        return self.write_store.write(instrument_key, timeframe, df, "upstox")
 
     def no_data_sessions(self, instrument_key: str, timeframe: str,
                          start: date, end: date) -> set[date]:
