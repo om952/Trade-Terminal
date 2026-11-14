@@ -362,6 +362,8 @@ class PaperSession:
 
         if recovered.risk:
             self.risk.entries_today = int(recovered.risk.get("entries_today", 0))
+            last_entry = recovered.risk.get("last_entry_bar")
+            self.risk.last_entry_bar = int(last_entry) if last_entry is not None else None
             last_exit = recovered.risk.get("last_exit_bar")
             self.risk.last_exit_bar = int(last_exit) if last_exit is not None else None
             if recovered.risk.get("halted"):
@@ -821,6 +823,7 @@ def _intent_from_dict(data: dict) -> OrderIntent:
 def _risk_snapshot(risk: RiskGuard) -> dict:
     return {
         "entries_today": risk.entries_today,
+        "last_entry_bar": risk.last_entry_bar,
         "last_exit_bar": risk.last_exit_bar,
         "halted": risk.halted,
         "halt_reason": risk.halt_reason.value,
