@@ -27,6 +27,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend.agent import service as agent
 from backend.api.security import DEV_ORIGINS, LocalOnlyMiddleware, parse_extra_hosts
 from backend.appstate import runs as run_history
 from backend.appstate import strategies as saved_strategies
@@ -556,6 +557,77 @@ def jobs_get(job_id: str) -> dict:
 def jobs_cancel(job_id: str) -> dict:
     with _service_errors():
         return job_runner.cancel(job_id)
+
+
+# ---------------------------------------------------------------------------
+# Strategy builder conversations
+# ---------------------------------------------------------------------------
+
+class BuilderBacktestSettings(BaseModel):
+    start: date | None = None
+    end: date | None = None
+    starting_capital: float | None = Field(default=None, gt=0)
+    lot_size: int | None = Field(default=None, ge=1, le=10_000)
+    symbol: str | None = None
+
+
+class StartConversationRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    backtest: BuilderBacktestSettings = Field(default_factory=BuilderBacktestSettings)
+
+
+@contextmanager
+def _agent_errors():
+    from backend.agent.service import ConversationNotFound, InvalidReply, TurnInProgress
+
+    try:
+        yield
+    except ConversationNotFound as exc:
+        raise HTTPException(404, f"No conversation {exc.args[0]}") from exc
+    except TurnInProgress as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except InvalidReply as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/agent/conversations")
+def agent_list(limit: int = 50) -> dict:
+    return {"conversations": agent.list_conversations(limit)}
+
+
+@app.post("/api/agent/conversations", status_code=202)
+def agent_start(req: StartConversationRequest) -> dict:
+    """Describe a strategy. The turn runs in the background; poll the conversation."""
+    with _agent_errors():
+        return agent.start(req.text, req.backtest.model_dump(mode="json", exclude_none=True))
+
+
+@app.get("/api/agent/conversations/{conversation_id}")
+def agent_view(conversation_id: str) -> dict:
+    with _agent_errors():
+        return agent.view(conversation_id)
+
+
+@app.post("/api/agent/conversations/{conversation_id}/reply", status_code=202)
+def agent_reply(conversation_id: str, payload: dict[str, Any]) -> dict:
+    """Answer the pending pause: questions, approval, or a follow-up change."""
+    with _agent_errors():
+        return agent.reply(conversation_id, payload)
+
+
+@app.post("/api/agent/conversations/{conversation_id}/retry", status_code=202)
+def agent_retry(conversation_id: str) -> dict:
+    with _agent_errors():
+        return agent.retry(conversation_id)
+
+
+@app.post("/api/agent/conversations/{conversation_id}/cancel")
+def agent_cancel(conversation_id: str) -> dict:
+    with _agent_errors():
+        current = agent.view(conversation_id)
+        if current["job"]:
+            job_runner.cancel(current["job"]["id"])
+        return agent.view(conversation_id)
 
 
 # ---------------------------------------------------------------------------

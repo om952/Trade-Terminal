@@ -89,6 +89,19 @@ MIGRATIONS: list[str] = [
     CREATE INDEX ix_runs_strategy ON runs(strategy_id, created_at);
     CREATE INDEX ix_runs_hash ON runs(strategy_hash);
     """,
+    # 2: builder conversations. The graph's own state lives in its checkpoint
+    # database; this row is the index the UI lists and the turn lock.
+    """
+    CREATE TABLE conversations (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        strategy_id TEXT REFERENCES strategies(id),
+        job_id      TEXT,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX ix_conversations_updated ON conversations(updated_at);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

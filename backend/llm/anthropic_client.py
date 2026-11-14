@@ -61,8 +61,8 @@ class AnthropicClient:
                 model=self.model,
                 max_tokens=max_tokens,
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                messages=messages,
-                output_config={
+                messages=messages,  # type: ignore[arg-type]  # plain role/content dicts
+                output_config={  # type: ignore[arg-type]
                     "effort": self.effort,
                     "format": {"type": "json_schema", "schema": schema},
                 },
@@ -103,7 +103,7 @@ class AnthropicClient:
         if message.stop_reason == "max_tokens":
             raise LLMTruncated(f"The answer exceeded {max_tokens:,} tokens and was cut off.")
 
-        text = next((b.text for b in message.content if b.type == "text"), "")
+        text = next((b.text for b in message.content if b.type == "text"), "")  # type: ignore[union-attr]
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
