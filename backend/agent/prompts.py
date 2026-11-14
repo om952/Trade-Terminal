@@ -127,8 +127,12 @@ Rules the schema cannot show:
 - Condition operands are numbers, indicator ids, "id.output" for multi-output indicators, price fields ({", ".join(sorted(PRICE_FIELDS))}), context fields ({", ".join(sorted(CONTEXT_FIELDS))}), or an inline indicator object such as {{"type": "SMA", "of": "volume", "period": 20}}.
 - "rising" and "falling" compare against the previous bar; give right as 0.
 - Indicator and leg ids are lowercase snake_case, unique within the document.
-- instrument.symbol is an instrument key. Index aliases: {aliases}. For a stock, use "NSE_EQ|<TRADING SYMBOL>" with segment "equity". Synthetic test data uses keys like "SIM|NIFTY".
-- Options are legs with kind "option" and an option block; signals are still read from instrument.symbol (the underlying).
+- instrument.symbol names what the signals are read from. For an index use its alias or key: {aliases}. For a stock, give the plain NSE trading symbol (for example "RELIANCE" or "HDFCBANK") with segment "equity"; the platform resolves it to the exchange's instrument key. Synthetic test data uses keys like "SIM|NIFTY"; keep any key the trader gives verbatim.
+- Options are legs with kind "option" and an option block; signals are still read from instrument.symbol (the underlying). A leg of kind "equity" trades the underlying itself (BUY is long, SELL is short), including on an index.
+- strike_rule: "ATM" is at the money. "OTM+N" and "ITM+N" are N strikes out of or into the money for that option's own type, so "OTM+2" is above spot for a call and below spot for a put; the sign is ignored. "ATM+N" and "ATM-N" are absolute: N strikes above or below the at-the-money strike for calls and puts alike. "STRIKE:24800" is a fixed strike and "DELTA:0.30" the strike nearest that delta.
+- Every open leg counts as a position: set risk.max_concurrent_positions to the number of legs. risk.max_trades_per_day counts entries of the whole structure, not legs.
+- Stop loss, target and trail on an option leg are measured on the option's premium; on other legs, on the underlying's price.
+- A time-based entry ("sell a straddle at 9:30") has no indicator condition: set session.start to that time, use the always-true entry condition {{"left": "close", "cmp": ">", "right": 0}}, and set risk.max_trades_per_day to 1 unless the trader says otherwise.
 - Intraday strategies set session.square_off; positional ones set it to null.
 - Leave id empty; the platform assigns it. Give the strategy a short descriptive name.
 

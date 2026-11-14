@@ -171,13 +171,18 @@ def make_nodes(get_llm: Callable[[], LLMClient], run_backtest: Callable[..., dic
                 raise ValueError("the document must be a JSON object")
         except ValueError as exc:
             return {"errors": [{"field": "", "message": f"Not valid JSON: {exc}"}]}
-        document = _normalize(document)
+        document, symbol_error = _normalize(document)
         try:
+            if symbol_error:
+                raise ValueError(symbol_error)
             strategy = Strategy.model_validate(document)
-        except Exception as exc:  # pydantic ValidationError
+        except Exception as exc:  # pydantic ValidationError, or an unknown instrument
             from backend.services.backtest import format_validation_error
 
-            errors = format_validation_error(exc)
+            errors = (
+                [{"field": "instrument.symbol", "message": symbol_error}]
+                if symbol_error else format_validation_error(exc)
+            )
             update: dict[str, Any] = {"errors": errors}
             if state.get("repairs", 0) >= MAX_REPAIRS and state.get("document"):
                 # Going back to the last good document: say why the new one was dropped.
@@ -397,19 +402,47 @@ def _answers_text(questions: list[dict], reply: Any) -> str:
     return str(reply)
 
 
-def _normalize(document: dict[str, Any]) -> dict[str, Any]:
-    """Resolve index aliases to keys and clear any model-chosen id."""
-    from backend.data.instruments import INDICES
+def resolve_symbol(symbol: str) -> tuple[str, str | None]:
+    """(instrument key, error). Index aliases and trading symbols become keys.
 
+    A key (anything with "|") is kept as given. A plain symbol is looked up in
+    the instrument master; if the master has not been synced the symbol is kept,
+    because that is a setup problem the backtest will name, not a model error.
+    """
+    from backend.data import instruments as inst
+
+    symbol = symbol.strip()
+    if "|" in symbol or not symbol:
+        return symbol, None
+    alias = symbol.upper().replace(" ", "")
+    if alias in inst.INDICES:
+        return inst.INDICES[alias], None
+    try:
+        return inst.resolve(symbol), None
+    except KeyError:
+        try:
+            synced = inst.count() > 0
+        except Exception:
+            synced = False
+        if synced:
+            return symbol, f"Unknown instrument {symbol!r}: no such index alias or trading symbol"
+        return symbol.upper(), None
+    except Exception:          # instrument store unavailable
+        return symbol.upper(), None
+
+
+def _normalize(document: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Resolve the instrument to a key and clear any model-chosen id."""
     document = dict(document)
     document["id"] = ""
-    instrument = dict(document.get("instrument") or {})
-    symbol = str(instrument.get("symbol", ""))
-    alias = symbol.upper().replace(" ", "")
-    if "|" not in symbol and alias in INDICES:
-        instrument["symbol"] = INDICES[alias]
-        document["instrument"] = instrument
-    return document
+    instrument = document.get("instrument")
+    if not isinstance(instrument, dict):
+        return document, None
+    instrument = dict(instrument)
+    key, error = resolve_symbol(str(instrument.get("symbol", "")))
+    instrument["symbol"] = key
+    document["instrument"] = instrument
+    return document, error
 
 
 def _run_summary(report: dict[str, Any]) -> dict[str, Any]:

@@ -71,17 +71,41 @@ def _exit(rule: ExitRule, what: str) -> str:
     return f"{what} {amount}"
 
 
+def _strike(rule: str, right: str) -> str:
+    """'OTM-2' on a put -> '2 strikes out of the money (OTM-2)': the words say
+    what the engine does, since the sign on OTM/ITM rules is ignored."""
+    import re
+
+    upper = rule.upper()
+    match = re.match(r"^(ATM|ITM|OTM)([+-]\d+)?$", upper)
+    if not match:
+        if upper.startswith("STRIKE:"):
+            return f"{upper[7:]} strike"
+        if upper.startswith("DELTA:"):
+            return f"{upper[6:]}-delta"
+        return rule
+    kind, offset = match.group(1), int(match.group(2) or 0)
+    if kind == "ATM":
+        if offset == 0:
+            return "at-the-money"
+        return f"{abs(offset)} strike{'s' if abs(offset) != 1 else ''} {'above' if offset > 0 else 'below'} the money"
+    n = abs(offset) or 1
+    where = "out of the money" if kind == "OTM" else "in the money"
+    return f"{n} strike{'s' if n != 1 else ''} {where}"
+
+
 def _leg(leg: Leg) -> str:
     lots = f"{leg.lots} lot{'s' if leg.lots != 1 else ''}"
     if leg.kind is LegKind.OPTION and leg.option:
         right = "call" if leg.option.right.value == "CE" else "put"
-        what = f"the {leg.option.strike_rule} {right} ({_EXPIRY[leg.option.expiry]})"
+        what = f"the {_strike(leg.option.strike_rule, leg.option.right.value)} {right} ({_EXPIRY[leg.option.expiry]})"
     elif leg.kind is LegKind.FUTURE:
         what = "the future"
     else:
         what = "the underlying"
     text = f"{leg.action.value} {lots} of {what}"
     exits = []
+    basis = " of premium" if leg.kind is LegKind.OPTION else ""
     if leg.stop_loss:
         exits.append(_exit(leg.stop_loss, "stop loss"))
     if leg.target:
@@ -89,7 +113,7 @@ def _leg(leg: Leg) -> str:
     if leg.trail:
         armed = f", armed after {leg.trail.activate_at:g}" if leg.trail.activate_at else ""
         exits.append(_exit(leg.trail, "trailing stop") + armed)
-    return text + (f"; {', '.join(exits)}" if exits else "; no stop loss or target")
+    return text + (f"; {', '.join(exits)}{basis}" if exits else "; no stop loss or target")
 
 
 def render(strategy: Strategy) -> dict[str, Any]:
