@@ -32,9 +32,9 @@ from backend.api.security import DEV_ORIGINS, LocalOnlyMiddleware, parse_extra_h
 from backend.core.config import IST, settings
 from backend.core.logsetup import configure_logging
 from backend.core.version import __version__
+from backend.data import cache
 from backend.data import instruments as inst
-from backend.data.calendar import find_gaps
-from backend.data.store import all_coverage, read_candles, write_candles
+from backend.data.store import all_coverage, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
 from backend.strategy import templates
@@ -159,16 +159,28 @@ def _candles_payload(df: pd.DataFrame) -> list[dict]:
     ]
 
 
-def _load_candles(symbol: str, timeframe: str, start: date | None, end: date | None) -> pd.DataFrame:
+def _load_bars(
+    symbol: str, timeframe: str, start: date | None, end: date | None
+) -> cache.Bars:
+    """Bars through the read-through cache: missing sessions are downloaded first."""
     key = symbol if "|" in symbol else _resolve_or_400(symbol)
-    df = read_candles(key, timeframe, start, end)
-    if df.empty:
-        raise HTTPException(
-            404,
-            f"No stored candles for {key} {timeframe}. "
-            f"Fetch them first (POST /api/data/fetch) or generate synthetic data.",
-        )
-    return df
+    try:
+        bars = cache.get_bars(key, timeframe, start, end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if bars.empty:
+        if key.startswith("SIM|"):
+            hint = "Generate synthetic data first (POST /api/data/simulate)."
+        elif cache.is_fetchable(key):
+            hint = " ".join(bars.notes) or "Upstox returned no bars for that range."
+        else:
+            hint = "Import it first (python -m backend.data.ingest import-csv)."
+        raise HTTPException(404, f"No candles for {key} {timeframe}. {hint}")
+    return bars
+
+
+def _load_candles(symbol: str, timeframe: str, start: date | None, end: date | None) -> pd.DataFrame:
+    return _load_bars(symbol, timeframe, start, end).frame
 
 
 def _resolve_or_400(symbol: str) -> str:
@@ -298,7 +310,8 @@ def candles(
     end: date | None = None,
     limit: int = MAX_CHART_BARS,
 ) -> dict:
-    df = _load_candles(symbol, timeframe, start, end)
+    bars = _load_bars(symbol, timeframe, start, end)
+    df = bars.frame
     total = len(df)
     df = _downsample(df, limit)
     return {
@@ -306,6 +319,7 @@ def candles(
         "timeframe": timeframe,
         "total_bars": total,
         "returned": len(df),
+        "data": bars.describe(),
         "candles": _candles_payload(df),
     }
 
@@ -319,31 +333,38 @@ class FetchRequest(BaseModel):
 
 @app.post("/api/data/fetch")
 def fetch_data(req: FetchRequest) -> dict:
-    """Pull history from Upstox into the local store."""
+    """Fill the cache for a range. Intraday timeframes download 1-minute bars once
+    and derive the rest, so a later request at another timeframe is instant."""
     from datetime import timedelta
 
-    from backend.data.upstox_client import fetch_candles
-
     key = _resolve_or_400(req.symbol)
-    start = req.from_date or (date.today() - timedelta(days=req.days))
+    if not cache.is_fetchable(key):
+        raise HTTPException(400, f"{key} is not a broker instrument; nothing to download.")
+    ready, reason = cache.broker_ready()
+    if not ready:
+        raise HTTPException(409, f"Upstox is not connected: {reason}")
 
+    start = req.from_date or (date.today() - timedelta(days=req.days))
     try:
-        df = fetch_candles(key, req.timeframe, start)
+        bars = cache.get_bars(key, req.timeframe, start)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
 
-    if df.empty:
-        raise HTTPException(404, f"Upstox returned no data for {key} {req.timeframe}")
+    if bars.empty:
+        raise HTTPException(404, f"No data for {key} {req.timeframe}. {' '.join(bars.notes)}")
 
-    total = write_candles(key, req.timeframe, df, source="upstox")
-    report = find_gaps(read_candles(key, req.timeframe), key, req.timeframe)
+    expected = len(bars.frame["timestamp"].dt.date.unique()) + len(bars.missing_sessions)
+    present = expected - len(bars.missing_sessions)
     return {
         "instrument_key": key,
-        "fetched": len(df),
-        "total_bars": total,
-        "coverage_pct": round(report.coverage_pct, 2),
-        "missing_sessions": len(report.missing_sessions),
-        "clean": report.is_clean,
+        "fetched": bars.fetched_sessions,
+        "total_bars": len(bars.frame),
+        "coverage_pct": round(100.0 * present / expected, 2) if expected else 0.0,
+        "missing_sessions": len(bars.missing_sessions),
+        "clean": not bars.missing_sessions,
+        "data": bars.describe(),
     }
 
 
@@ -458,7 +479,8 @@ def backtest(req: BacktestRequest) -> dict:
         raise HTTPException(422, {"errors": _format_validation_error(exc)}) from exc
 
     symbol = req.symbol or strategy.instrument.symbol
-    df = _load_candles(symbol, strategy.timeframe, req.start, req.end)
+    bars = _load_bars(symbol, strategy.timeframe, req.start, req.end)
+    df = bars.frame
 
     warnings = preflight(strategy, df)
     capital = Decimal(str(req.starting_capital))
@@ -507,7 +529,8 @@ def backtest(req: BacktestRequest) -> dict:
         "symbol": symbol,
         "timeframe": strategy.timeframe,
         "segment": segment.value,
-        "synthetic_data": symbol.startswith("SIM|"),
+        "synthetic_data": bars.synthetic,
+        "data": bars.describe(),
         "warnings": warnings,
         "metrics": stats.as_dict(),
         "split": split,
@@ -702,7 +725,15 @@ def live_start(req: LiveStartRequest) -> dict:
         # Warming up on the newest bars in the store instead — which is what a
         # live session correctly does — would evaluate the opening bars of an old
         # window against indicator values drawn from months later.
-        history = _load_candles(symbol, strategy.timeframe, None, req.replay_end)
+        from backend.data.upstox_client import Timeframe
+
+        warm_from = (
+            cache.warmup_start(
+                Timeframe.parse(strategy.timeframe), symbol, req.warmup_bars, req.replay_start
+            )
+            if req.replay_start is not None else None
+        )
+        history = _load_candles(symbol, strategy.timeframe, warm_from, req.replay_end)
         if req.replay_start is not None:
             history_before = pd.Timestamp(req.replay_start).tz_localize(IST).to_pydatetime()
             df = history[history["timestamp"] >= history_before].reset_index(drop=True)

@@ -14,9 +14,10 @@ look plausible, and they are simply not the numbers the backtest computed.
 
 So warmup does three things, in order, and all three are required:
 
-  1. Ensures stored history reaches the last completed session, fetching the gap
-     if it does not. Priming indicators across a month-wide hole in the data
-     produces values that correspond to no real series.
+  1. Asks the read-through cache (backend/data/cache.py) for history up to the
+     last completed session, which downloads any missing sessions first.
+     Priming indicators across a month-wide hole in the data produces values
+     that correspond to no real series.
   2. Appends today's already-elapsed bars, so a session started mid-day resumes
      with the same indicator state it would have had running since the open.
   3. Tells the source how far it has primed, so the first live bar is genuinely
@@ -26,7 +27,7 @@ So warmup does three things, in order, and all three are required:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Iterator
 
@@ -34,7 +35,6 @@ import pandas as pd
 
 from backend.core.config import IST
 from backend.core.interfaces import Bar
-from backend.data import calendar as cal
 from backend.data.upstox_client import Timeframe
 from backend.live.sources import BarSource
 
@@ -120,17 +120,20 @@ class LiveFeed:
 
     def history(self, bars: int, through: datetime | None = None) -> pd.DataFrame:
         """The last `bars` closed candles ending at `through`, or at the source's start."""
-        from backend.data.store import read_candles
+        from backend.data import cache
 
         if self._history_frame is not None:
             frame = self._history_frame.reset_index(drop=True)
             frame = self._clip(frame, through)
             return frame.tail(bars).reset_index(drop=True) if bars > 0 else frame
 
-        stored = read_candles(self.instrument_key, self.tf.label)
-
-        if self.auto_fetch:
-            stored = self._ensure_current(stored)
+        before = (through or datetime.now(IST)).date() + timedelta(days=1)
+        start = (
+            cache.warmup_start(self.tf, self.instrument_key, bars, before) if bars > 0 else None
+        )
+        stored = cache.get_bars(
+            self.instrument_key, self.tf, start, fetch=self.auto_fetch
+        ).frame
 
         frames = [stored] if not stored.empty else []
 
@@ -174,48 +177,6 @@ class LiveFeed:
             return frame[stamps < pd.Timestamp(self._history_before)].reset_index(drop=True)
         return frame
 
-    def _ensure_current(self, stored: pd.DataFrame) -> pd.DataFrame:
-        """Fetch forward to the last completed session if storage lags behind.
-
-        Priming an EMA across a gap gives a value that belongs to no real series —
-        neither the pre-gap one nor the post-gap one — so a stale store has to be
-        repaired before it is used, not merely warned about.
-        """
-        from backend.data.store import read_candles, write_candles
-        from backend.data.upstox_client import fetch_candles
-
-        today = datetime.now(IST).date()
-        target = self._last_completed_session(today)
-
-        if not stored.empty:
-            last = pd.Timestamp(stored["timestamp"].iloc[-1])
-            last_day = last.date()
-            if last_day >= target:
-                return stored
-            start = last_day + timedelta(days=1)
-        else:
-            span = 400 if self.tf.unit in ("days", "weeks", "months") else 60
-            start = today - timedelta(days=span)
-
-        log.info(
-            "History for %s %s ends %s, need %s — fetching the gap",
-            self.instrument_key, self.tf.label,
-            stored["timestamp"].iloc[-1].date() if not stored.empty else "never", target,
-        )
-        try:
-            fresh = fetch_candles(
-                self.instrument_key, self.tf, start, target, include_today=False
-            )
-        except Exception as exc:
-            log.error("Gap fetch failed: %s", exc)
-            return stored
-
-        if fresh.empty:
-            return stored
-
-        write_candles(self.instrument_key, self.tf.label, fresh, source="upstox")
-        return read_candles(self.instrument_key, self.tf.label)
-
     def _today(self) -> pd.DataFrame:
         """Today's elapsed bars, so a mid-session start is not a cold start."""
         from backend.data.upstox_client import fetch_intraday
@@ -225,12 +186,3 @@ class LiveFeed:
         except Exception as exc:
             log.warning("Could not fetch today's bars for priming: %s", exc)
             return pd.DataFrame()
-
-    @staticmethod
-    def _last_completed_session(today: date) -> date:
-        day = today - timedelta(days=1)
-        for _ in range(15):
-            if cal.is_trading_day(day):
-                return day
-            day -= timedelta(days=1)
-        return today - timedelta(days=1)

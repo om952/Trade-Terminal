@@ -17,7 +17,8 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import httpx
@@ -185,6 +186,23 @@ def fetch_intraday(instrument_key: str, tf: Timeframe) -> pd.DataFrame:
     return _candles_to_frame(payload.get("data", {}).get("candles", []))
 
 
+EMPTY_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "oi"]
+
+
+@dataclass
+class FetchResult:
+    """Bars plus the windows that could not be fetched.
+
+    The distinction matters to the cache: a session inside a failed window is
+    unknown, while a session inside a successful window that returned nothing
+    really had no data (a holiday, or before the contract listed).
+    """
+
+    frame: pd.DataFrame
+    failed: list[tuple[date, date, str]] = field(default_factory=list)
+    calls: int = 0
+
+
 def fetch_candles(
     instrument_key: str,
     timeframe: str | Timeframe,
@@ -192,11 +210,26 @@ def fetch_candles(
     to_date: date | None = None,
     include_today: bool = True,
 ) -> pd.DataFrame:
-    """Fetch a full range, chunking as needed. This is the function to call.
+    """Fetch a full range, chunking as needed, and return the bars.
 
     Clamps `from_date` to the earliest date Upstox actually serves for the unit,
     so asking for 1-minute data from 2015 returns 2022-onward rather than an error.
+    Windows that fail are logged and skipped; use `fetch_candles_report` to see them.
     """
+    return fetch_candles_report(
+        instrument_key, timeframe, from_date, to_date, include_today=include_today
+    ).frame
+
+
+def fetch_candles_report(
+    instrument_key: str,
+    timeframe: str | Timeframe,
+    from_date: date,
+    to_date: date | None = None,
+    include_today: bool = True,
+    on_chunk: Callable[[int, int], None] | None = None,
+) -> FetchResult:
+    """`fetch_candles`, also reporting failed windows. `on_chunk(done, total)` tracks progress."""
     tf = Timeframe.parse(timeframe) if isinstance(timeframe, str) else timeframe
     today = pd.Timestamp.now(tz=IST).date()
     to_date = to_date or today
@@ -208,9 +241,10 @@ def fetch_candles(
         from_date = earliest
 
     if from_date > to_date:
-        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        return FetchResult(pd.DataFrame(columns=EMPTY_COLUMNS))
 
     span = CHUNK_DAYS[tf.unit]
+    total_chunks = -(-((to_date - from_date).days + 1) // span)
     frames: list[pd.DataFrame] = []
     cursor = from_date
     chunks = 0
@@ -229,9 +263,13 @@ def fetch_candles(
             log.warning("Chunk %s..%s failed, continuing: %s", cursor, chunk_end, str(exc)[:160])
             cursor = chunk_end + timedelta(days=1)
             chunks += 1
+            if on_chunk:
+                on_chunk(chunks, total_chunks)
             continue
 
         chunks += 1
+        if on_chunk:
+            on_chunk(chunks, total_chunks)
         if not df.empty:
             frames.append(df)
         log.debug("  %s %s..%s -> %d bars", tf.label, cursor, chunk_end, len(df))
@@ -257,14 +295,14 @@ def fetch_candles(
     if not frames:
         log.warning("No data for %s %s (%s..%s) across %d chunks",
                     instrument_key, tf.label, from_date, to_date, chunks)
-        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+        return FetchResult(pd.DataFrame(columns=EMPTY_COLUMNS), failed, chunks)
 
     out = pd.concat(frames, ignore_index=True)
     out = out.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
     log.info("%s %s: %d bars (%s..%s) in %d calls",
              instrument_key, tf.label, len(out),
              out["timestamp"].iloc[0].date(), out["timestamp"].iloc[-1].date(), chunks)
-    return out.reset_index(drop=True)
+    return FetchResult(out.reset_index(drop=True), failed, chunks)
 
 
 def profile() -> dict:

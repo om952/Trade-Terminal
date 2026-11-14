@@ -98,20 +98,28 @@ def cmd_paper(args) -> None:
 
 
 def cmd_replay(args) -> None:
-    from backend.data.store import read_candles
+    import pandas as pd
+
+    from backend.data import cache
+    from backend.data.upstox_client import Timeframe
     from backend.live.sources import ReplaySource
 
     strategy = _strategy(args)
     key = _resolve(args.symbol)
 
-    stored = read_candles(key, strategy.timeframe)
+    first_day = pd.Timestamp(args.start).date() if args.start else None
+    last_day = pd.Timestamp(args.end).date() if args.end else None
+    warm_from = (
+        cache.warmup_start(Timeframe.parse(strategy.timeframe), key, args.warmup, first_day)
+        if first_day else None
+    )
+    bars = cache.get_bars(key, strategy.timeframe, warm_from, last_day)
+    stored = bars.frame
     if stored.empty:
         sys.exit(
-            f"No stored candles for {key} at {strategy.timeframe}. Fetch them:\n"
-            f"    python -m backend.data.ingest fetch {args.symbol} -t {strategy.timeframe}"
+            f"No candles for {key} at {strategy.timeframe}. "
+            + (" ".join(bars.notes) or "Check the symbol and the date range.")
         )
-
-    import pandas as pd
 
     start = pd.Timestamp(args.start).tz_localize(IST) if args.start else None
     end = pd.Timestamp(args.end).tz_localize(IST) + timedelta(days=1) if args.end else None
