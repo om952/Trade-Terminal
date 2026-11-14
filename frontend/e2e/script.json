@@ -1,0 +1,18 @@
+[
+  {
+    "status": "ready",
+    "questions": [],
+    "assumptions": [
+      "15-minute bars",
+      "1 lot"
+    ],
+    "strategy_json": "{\"schema_version\": 1, \"id\": \"\", \"name\": \"EMA 9/21 crossover (e2e)\", \"description\": \"Long when EMA(9) crosses above EMA(20), exit on the reverse cross.\", \"instrument\": {\"symbol\": \"SIM|NIFTY\", \"segment\": \"index\"}, \"timeframe\": \"15m\", \"session\": {\"start\": \"09:20:00\", \"end\": \"15:10:00\", \"square_off\": \"15:15:00\"}, \"indicators\": [{\"id\": \"ema_fast\", \"type\": \"EMA\", \"params\": {\"period\": 9}}, {\"id\": \"ema_slow\", \"type\": \"EMA\", \"params\": {\"period\": 20}}, {\"id\": \"atr\", \"type\": \"ATR\", \"params\": {\"period\": 14}}], \"entry\": {\"op\": \"AND\", \"conditions\": [{\"left\": \"ema_fast\", \"cmp\": \"crosses_above\", \"right\": \"ema_slow\"}]}, \"exit\": {\"op\": \"OR\", \"conditions\": [{\"left\": \"ema_fast\", \"cmp\": \"crosses_below\", \"right\": \"ema_slow\"}]}, \"legs\": [{\"id\": \"leg1\", \"action\": \"BUY\", \"kind\": \"equity\", \"lots\": 1, \"option\": null, \"stop_loss\": {\"type\": \"atr_multiple\", \"value\": 1.5, \"ref\": \"atr\"}, \"target\": {\"type\": \"atr_multiple\", \"value\": 3.0, \"ref\": \"atr\"}, \"trail\": null}], \"risk\": {\"max_loss_per_day\": null, \"max_profit_per_day\": null, \"max_trades_per_day\": 4, \"max_concurrent_positions\": 1, \"re_entry\": {\"enabled\": true, \"max\": 3, \"cooldown_bars\": 2}}, \"costs\": {\"slippage_bps\": 5.0, \"brokerage_model\": \"upstox_fno\"}}",
+    "unsupported_reason": ""
+  },
+  {
+    "explanation": "The backtest ran end to end on synthetic data, so treat it as a check of the mechanics, not of the idea.",
+    "caveats": [
+      "Synthetic data says nothing about real markets."
+    ]
+  }
+]

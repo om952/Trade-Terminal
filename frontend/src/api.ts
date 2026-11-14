@@ -131,6 +131,9 @@ export interface BacktestResult {
   timeframe: string;
   segment: string;
   synthetic_data: boolean;
+  data?: DataInfo;
+  run_id?: string;
+  trials?: number;
   warnings: string[];
   metrics: Metrics;
   split: {
@@ -276,6 +279,147 @@ export interface LiveStartRequest {
   poll_seconds?: number;
 }
 
+
+// ---------------------------------------------------------------------------
+// Strategy builder conversations, saved strategies, runs, LLM settings
+// ---------------------------------------------------------------------------
+
+export interface Question {
+  question: string;
+  why: string;
+  options: string[];
+}
+
+export interface ReadbackCard {
+  title: string;
+  summary: string;
+  sections: { heading: string; lines: string[] }[];
+}
+
+export type Pending =
+  | { type: "questions"; questions: Question[] }
+  | { type: "approval"; card: ReadbackCard; assumptions: string[]; document: Record<string, unknown> }
+  | { type: "followup" };
+
+export interface RunSummary {
+  run_id: string | null;
+  strategy_hash: string;
+  symbol: string;
+  timeframe: string;
+  synthetic_data: boolean;
+  metrics: Metrics;
+  warnings: string[];
+  blocked_reasons: Record<string, number>;
+  data: DataInfo;
+  trades: number;
+  trials: number;
+}
+
+export interface DataInfo {
+  instrument_key: string;
+  timeframe: string;
+  source: string;
+  derived_from: string | null;
+  synthetic: boolean;
+  first_bar: string | null;
+  last_bar: string | null;
+  bars: number;
+  fingerprint: string;
+  missing_sessions: number;
+  fetched_sessions: number;
+  notes: string[];
+}
+
+export interface TranscriptEvent {
+  role: "user" | "assistant" | "system";
+  kind: string;
+  text: string;
+  data?: Record<string, any>;
+}
+
+export type Phase =
+  | "working" | "awaiting_answers" | "awaiting_approval" | "awaiting_followup"
+  | "failed" | "unsupported" | "rejected" | "interrupted" | "idle" | "compiling";
+
+export interface Conversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  strategy_id: string | null;
+  version: number | null;
+  phase: Phase;
+  pending: Pending | null;
+  transcript: TranscriptEvent[];
+  document: Record<string, unknown> | null;
+  assumptions: string[];
+  run: RunSummary | null;
+  error: string | null;
+  usage: {
+    steps?: number; total?: number; seconds?: number;
+    limits: { steps: number; tokens: number; seconds: number };
+  };
+  job: { id: string; status: string; progress: number; message: string; error: string | null } | null;
+  can_retry: boolean;
+}
+
+export interface ConversationRow {
+  id: string;
+  title: string;
+  strategy_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedStrategy {
+  id: string;
+  name: string;
+  hash: string;
+  version: number;
+  archived: boolean;
+  runs: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StrategyVersion {
+  strategy_id: string;
+  version: number;
+  hash: string;
+  name: string;
+  origin: string;
+  note: string;
+  created_at: string;
+  document?: Record<string, unknown>;
+}
+
+export interface RunRow {
+  id: string;
+  strategy_id: string | null;
+  strategy_hash: string;
+  strategy_name: string;
+  params: Record<string, unknown>;
+  data: DataInfo;
+  metrics: Metrics;
+  created_at: string;
+}
+
+export interface LLMStatus {
+  provider: string;
+  model: string;
+  effort: string;
+  key_source: "keychain" | "environment" | null;
+  configured: boolean;
+  limits: { tokens_per_compile: number; model_calls_per_compile: number; seconds_per_compile: number };
+}
+
+export interface BuilderBacktestSettings {
+  start?: string;
+  end?: string;
+  starting_capital?: number;
+  lot_size?: number;
+}
+
 class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly detail?: unknown) {
     super(message);
@@ -383,6 +527,78 @@ export const api = {
     request<LiveSnapshot>(
       `/api/live/${encodeURIComponent(sessionId)}?include_bars=${includeBars}`,
     ),
+
+  // -- builder ---------------------------------------------------------------
+
+  conversations: () =>
+    request<{ conversations: ConversationRow[] }>("/api/agent/conversations"),
+
+  startConversation: (text: string, backtest: BuilderBacktestSettings = {}) =>
+    request<Conversation>("/api/agent/conversations", {
+      method: "POST",
+      body: JSON.stringify({ text, backtest }),
+    }),
+
+  conversation: (id: string) =>
+    request<Conversation>(`/api/agent/conversations/${encodeURIComponent(id)}`),
+
+  reply: (id: string, payload: Record<string, unknown>) =>
+    request<Conversation>(`/api/agent/conversations/${encodeURIComponent(id)}/reply`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  retryTurn: (id: string) =>
+    request<Conversation>(`/api/agent/conversations/${encodeURIComponent(id)}/retry`, {
+      method: "POST",
+    }),
+
+  cancelTurn: (id: string) =>
+    request<Conversation>(`/api/agent/conversations/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
+
+  // -- saved strategies and runs ---------------------------------------------
+
+  strategies: () => request<{ strategies: SavedStrategy[] }>("/api/strategies"),
+
+  strategy: (id: string, version?: number) =>
+    request<StrategyVersion & { document: Record<string, unknown>; versions: StrategyVersion[] }>(
+      `/api/strategies/${encodeURIComponent(id)}${version ? `?version=${version}` : ""}`,
+    ),
+
+  saveStrategy: (document: unknown, id?: string, note = "") =>
+    request<StrategyVersion & { new_version: boolean }>(
+      id ? `/api/strategies/${encodeURIComponent(id)}` : "/api/strategies",
+      { method: id ? "PUT" : "POST", body: JSON.stringify({ document, note }) },
+    ),
+
+  archiveStrategy: (id: string) =>
+    request<{ id: string; archived: boolean }>(`/api/strategies/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  runs: (strategyId?: string, limit = 50) =>
+    request<{ runs: RunRow[] }>(
+      `/api/runs?limit=${limit}${strategyId ? `&strategy_id=${encodeURIComponent(strategyId)}` : ""}`,
+    ),
+
+  run: (id: string) =>
+    request<RunRow & { document: Record<string, unknown>; result: BacktestResult }>(
+      `/api/runs/${encodeURIComponent(id)}`,
+    ),
+
+  // -- LLM settings ------------------------------------------------------------
+
+  llmStatus: () => request<LLMStatus>("/api/llm/status"),
+
+  setLlmKey: (apiKey: string) =>
+    request<LLMStatus>("/api/llm/key", {
+      method: "PUT",
+      body: JSON.stringify({ provider: "anthropic", api_key: apiKey }),
+    }),
+
+  deleteLlmKey: () => request<LLMStatus>("/api/llm/key", { method: "DELETE" }),
 };
 
 export { ApiError };

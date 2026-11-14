@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "./api";
-import type { BacktestResult, Dataset, IndicatorMeta, Status, TemplateMeta, ValidationResult } from "./api";
+import type { BacktestResult, Dataset, IndicatorMeta, RunSummary, Status, TemplateMeta, ValidationResult } from "./api";
+import { Assistant } from "./Assistant";
 import { Builder, type RunConfig } from "./Builder";
+import { Library } from "./Library";
 import { ChartTab, PerformanceTab, TradeLogTab } from "./Results";
 import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./Live";
 
@@ -21,6 +23,7 @@ const BLANK_STRATEGY = {
 };
 
 type Tab = "chart" | "performance" | "trades" | "live";
+type Panel = "assistant" | "builder" | "library";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -46,6 +49,10 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("performance");
+  const [panel, setPanel] = useState<Panel>("assistant");
+  const [strategyId, setStrategyId] = useState<string | null>(null);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [interrupted, setInterrupted] = useState(0);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -63,6 +70,9 @@ export default function App() {
         setIndicators(ind.indicators);
         setTemplates(tpl.templates);
         await loadDatasets();
+        // Sessions cut off by a crash are listed, never resumed silently.
+        const sessions = await api.liveSessions();
+        setInterrupted(sessions.history.filter((h) => h.state === "interrupted").length);
       } catch (e) {
         setError(
           "Cannot reach the backend. Start it with:  .venv/bin/uvicorn backend.api.main:app --port 8000",
@@ -127,6 +137,67 @@ export default function App() {
     }
   };
 
+  const openRun = async (runId: string) => {
+    setError(null);
+    try {
+      const run = await api.run(runId);
+      setResult(run.result);
+      setDoc(run.document);
+      setStrategyId(run.strategy_id);
+      setTab("performance");
+    } catch (e) {
+      setError((e as ApiError).message);
+    }
+  };
+
+  const openDocument = (document: Record<string, unknown>, id: string | null) => {
+    setDoc(document);
+    setStrategyId(id);
+    setPanel("builder");
+  };
+
+  // One click from a backtest to a paper session on the same strategy and
+  // settings. Synthetic data cannot be traded live, so it replays instead: the
+  // last fifth of the backtest window, so the earlier bars warm the indicators
+  // up exactly as the backtest's did. Replaying from the first bar would start
+  // cold and diverge from the backtest.
+  const startPaper = async (document: Record<string, unknown>, run: RunSummary) => {
+    setError(null);
+    const synthetic = run.symbol.startsWith("SIM|");
+    const first = Date.parse(run.data.first_bar ?? "");
+    const last = Date.parse(run.data.last_bar ?? "");
+    const replayStart = Number.isFinite(first) && Number.isFinite(last)
+      ? new Date(first + (last - first) * 0.8).toISOString().slice(0, 10)
+      : undefined;
+    try {
+      const started = await api.liveStart({
+        strategy: document,
+        symbol: run.symbol,
+        starting_capital: run.metrics.starting_capital,
+        lot_size: 1,
+        source: synthetic ? "replay" : "live",
+        ...(synthetic ? { replay_start: replayStart, replay_speed: 60 } : {}),
+        alerts: true,
+      });
+      setSessionId(started.session_id);
+      setTab("live");
+    } catch (e) {
+      setError(`Paper trading did not start: ${(e as ApiError).message}`);
+    }
+  };
+
+  const saveToLibrary = async () => {
+    setSaveNote(null);
+    try {
+      const saved = await api.saveStrategy(doc, strategyId ?? undefined);
+      setStrategyId(saved.strategy_id);
+      setDoc(saved.document ?? doc);
+      setSaveNote(saved.new_version ? `Saved as version ${saved.version}` : `No changes since version ${saved.version}`);
+    } catch (e) {
+      setSaveNote(`Not saved: ${(e as ApiError).message}`);
+    }
+  };
+
   return (
     <div className="app">
       <header className="header">
@@ -160,6 +231,28 @@ export default function App() {
 
       <div className="main">
         <aside className="sidebar">
+          <div className="seg-control" role="tablist">
+            {(["assistant", "builder", "library"] as Panel[]).map((p) => (
+              <button key={p} role="tab" aria-selected={panel === p}
+                className={panel === p ? "active" : ""} onClick={() => setPanel(p)}>
+                {p === "assistant" ? "Assistant" : p === "builder" ? "Builder" : "Library"}
+              </button>
+            ))}
+          </div>
+
+          {panel === "assistant" && (
+            <Assistant onOpenRun={openRun} onStartPaper={startPaper} onOpenDocument={openDocument} />
+          )}
+
+          {panel === "library" && <Library onOpenDocument={openDocument} onOpenRun={openRun} />}
+
+          {panel === "builder" && <>
+          <div className="row" style={{ gap: 6, marginBottom: 8 }}>
+            <button className="btn secondary tiny" disabled={!validation?.valid} onClick={saveToLibrary}>
+              {strategyId ? "Save new version" : "Save to library"}
+            </button>
+            {saveNote && <span className="hint">{saveNote}</span>}
+          </div>
           <Builder
             doc={doc}
             setDoc={setDoc}
@@ -185,6 +278,7 @@ export default function App() {
               setTab("live");
             }}
           />
+          </>}
         </aside>
 
         <main className="content">
@@ -194,7 +288,7 @@ export default function App() {
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={t !== "live" && !result}
+                disabled={t !== "live" && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -213,6 +307,20 @@ export default function App() {
           </nav>
 
           <div className="tab-body">
+            {interrupted > 0 && (
+              <div className="notice warn">
+                <div className="notice-title">
+                  {interrupted} paper session{interrupted > 1 ? "s were" : " was"} interrupted
+                </div>
+                The app stopped while {interrupted > 1 ? "they were" : "it was"} running. Nothing was
+                resumed automatically.{" "}
+                <button className="btn secondary tiny" onClick={() => { setTab("live"); setInterrupted(0); }}>
+                  Review in Live
+                </button>{" "}
+                <button className="btn secondary tiny" onClick={() => setInterrupted(0)}>Dismiss</button>
+              </div>
+            )}
+
             {error && (
               <div className="notice error">
                 <div className="notice-title">Error</div>
@@ -225,10 +333,8 @@ export default function App() {
             {tab !== "live" && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
-                <span>Pick a template or build a strategy, choose a dataset, then run.</span>
-                {datasets.length === 0 && (
-                  <span>No data stored yet — search an instrument and download its history first.</span>
-                )}
+                <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>
+                <span>Market data is downloaded automatically the first time it is needed.</span>
               </div>
             )}
 

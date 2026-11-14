@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     llm_provider: str = "anthropic"
     llm_model: str = "claude-opus-5-5"
     llm_effort: str = "high"
+    # Only for LLM_PROVIDER=scripted (end-to-end tests, offline demos).
+    llm_script: Path | None = None
     # Hard caps per compile, enforced before every model call.
     llm_max_tokens_per_compile: int = 200_000
     llm_max_steps: int = 8
@@ -83,6 +85,9 @@ class Settings(BaseSettings):
     # are always allowed; anything else is refused to block DNS rebinding.
     # Leave empty unless the API is deliberately reached under another name.
     api_allowed_hosts: str = ""
+    # Extra browser origins allowed to call the API (comma-separated), beyond
+    # the Vite dev server and the API's own origin. For test UIs on other ports.
+    api_allowed_origins: str = ""
 
     # --- Paths ---
     data_dir: Path = Field(default=ROOT / "data")

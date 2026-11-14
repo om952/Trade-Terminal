@@ -190,3 +190,20 @@ def test_key_endpoints(clean_keys):
     assert KEY not in stored.text
     assert client.put("/api/llm/key", json={"api_key": "x" * 19}).status_code == 422
     assert client.delete("/api/llm/key").json()["configured"] is False
+
+
+def test_scripted_provider_replays_a_file(tmp_path, monkeypatch):
+    from backend.core.config import settings
+    from backend.llm import factory, scripted
+
+    script = tmp_path / "script.json"
+    script.write_text(json.dumps([{"a": 1}, {"b": 2}]))
+    monkeypatch.setattr(settings, "llm_provider", "scripted")
+    monkeypatch.setattr(settings, "llm_script", script)
+    monkeypatch.setattr(scripted, "_instances", {})
+
+    assert factory.status()["configured"] and factory.status()["model"] == "scripted:script.json"
+    assert factory.get_client().complete_json(system="", messages=[], schema={}).data == {"a": 1}
+    assert factory.get_client().complete_json(system="", messages=[], schema={}).data == {"b": 2}
+    with pytest.raises(LLMError, match="no answers left"):
+        factory.get_client().complete_json(system="", messages=[], schema={})

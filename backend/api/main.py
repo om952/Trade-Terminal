@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.agent import service as agent
-from backend.api.security import DEV_ORIGINS, LocalOnlyMiddleware, parse_extra_hosts
+from backend.api.security import LocalOnlyMiddleware, allowed_origins, parse_extra_hosts
 from backend.appstate import runs as run_history
 from backend.appstate import strategies as saved_strategies
 from backend.core.config import IST, settings
@@ -123,13 +123,14 @@ app = FastAPI(
 app.add_middleware(
     LocalOnlyMiddleware,
     extra_hosts=parse_extra_hosts(settings.api_allowed_hosts),
+    allowed_origins=allowed_origins(settings.api_allowed_origins),
 )
 
 # The Vite dev server runs on a different port; in production the frontend is
 # served as static files from this same origin and CORS becomes irrelevant.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(DEV_ORIGINS),
+    allow_origins=list(allowed_origins(settings.api_allowed_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

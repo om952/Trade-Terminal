@@ -37,6 +37,12 @@ def parse_extra_hosts(raw: str) -> frozenset[str]:
     return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
 
 
+def allowed_origins(raw: str) -> tuple[str, ...]:
+    """The dev UI's origins plus any configured ones, normalized."""
+    extra = tuple(o.strip().rstrip("/").lower() for o in raw.split(",") if o.strip())
+    return DEV_ORIGINS + tuple(o for o in extra if o not in DEV_ORIGINS)
+
+
 def _hostname(netloc: str) -> str | None:
     """Hostname from a `Host` header value: 'LocalHost:8000' -> 'localhost'."""
     try:

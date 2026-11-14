@@ -542,7 +542,7 @@ def build(
 
 
 def default_backtest_params(document: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    params = {"strategy": document, "include_chart": False}
+    params = {"strategy": document, "include_chart": True}
     params.update({k: v for k, v in overrides.items() if v is not None})
     for key in ("start", "end"):
         value = params.get(key)

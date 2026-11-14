@@ -237,7 +237,7 @@ function InstrumentPanel({
           ))}
         </select>
         {available.length === 0 && (
-          <span className="hint">No data stored at {doc.timeframe}. Search below and download it.</span>
+          <span className="hint">Nothing stored at {doc.timeframe} yet. Running the backtest downloads it automatically when Upstox is connected; you can also fetch it below.</span>
         )}
       </div>
 

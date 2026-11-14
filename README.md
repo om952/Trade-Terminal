@@ -195,6 +195,25 @@ redacted). `LOG_LEVEL` in `.env` sets the level. Stopping the server stops any
 running paper sessions cleanly; sessions cut off by a crash are listed as
 "interrupted" in the Live tab and are never resumed without you.
 
+### Strategy assistant
+
+The Assistant tab turns a plain-English description into a strategy: it asks at
+most two questions, shows a read-back generated from the actual document, and
+runs nothing until you approve. After the backtest it explains the result using
+only the computed numbers, and follow-ups ("tighten the stop") become new
+versions in the Library.
+
+It uses Claude (`claude-opus-5-5` by default; `LLM_MODEL` and `LLM_EFFORT` in
+`.env`). Paste an Anthropic API key in the Assistant tab: it is stored in the OS
+keychain, never in a file. `ANTHROPIC_API_KEY` in the environment also works.
+Each turn is capped (`LLM_MAX_STEPS`, `LLM_MAX_TOKENS_PER_COMPILE`,
+`LLM_MAX_SECONDS`) and the usage is shown as it runs.
+
+Market data is fetched on demand: backtests download whatever sessions are
+missing (1-minute bars for intraday timeframes, daily bars otherwise) and
+derive 3m, 5m, 15m and 1h locally. `python -m backend.data.ingest parity NIFTY`
+checks derived bars against Upstox's native ones.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash
@@ -219,6 +238,18 @@ uv sync --extra dev          # install the locked dependencies (uv.lock)
 .venv/bin/ruff check .       # lint
 .venv/bin/mypy               # type check (informational for now)
 ```
+
+Frontend tests:
+
+```bash
+cd frontend
+npm test                    # component tests (Vitest)
+npm run e2e                 # end-to-end happy path (Playwright)
+```
+
+The end-to-end test starts its own API on a temporary data directory with
+`LLM_PROVIDER=scripted`, which replays `frontend/e2e/script.json` instead of
+calling a model. That provider is for tests and offline demos only.
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the tests, lint,
 the frontend build and dependency audits on every push and pull request. After

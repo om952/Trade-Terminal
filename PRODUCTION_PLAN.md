@@ -11,7 +11,18 @@ Item IDs (P0.1, P1.2, ...) are stable, so you can say "start P0" or "drop P3.4".
 | Phase | State | Notes |
 |---|---|---|
 | **0** Stabilise the base | **Done 2026-11-14** on branch `phase-0-stabilise`, pending merge and first CI run on GitHub | P0.1 to P0.8 implemented, 404 tests. See below for what is left open. |
-| 1 to 5 | Not started | |
+| **1** Vertical slice | **Built 2026-11-14** on branch `phase-1-slice` (stacked on phase 0). M1 gate partly verified, see below | P1.1 to P1.6 implemented: 492 backend tests, 6 component tests, 1 end-to-end test |
+| 2 to 5 | Not started | |
+
+Phase 1, what exists: read-through bar cache (1-minute and daily bases, derived timeframes, session ledger, fingerprints); SQLite app state with versioned strategies, run history and a job runner with progress and cancel; an LLM layer (Claude via the official SDK, keychain keys, per-turn caps); the LangGraph builder (at most 2 questions, at most 3 repairs, approval before any backtest, code-rendered read-back, JSON-patch refinements, number-checked explanations, SQLite checkpoints); the Assistant and Library UI with one-click paper trading.
+
+M1 gate, verified: describe, approve, backtest without a download step, open the report, start paper (Playwright, real stack, scripted model); restart resumes at the same pause and a cut-off turn continues without redoing work (graph tests); the agent cannot import the order path (AST and transitive import tests); parity, crash-recovery and lookahead gates still green; the agent's backtest equals the HTTP endpoint's.
+
+M1 gate, not yet verified (needs your credentials and spend):
+
+- **The 10-description smoke check against the real model.** No Claude call has been made; every agent test uses a scripted model.
+- **The broker path.** The Upstox token in `.env` expired in August, so live downloads and `ingest parity` (derived vs native 5m bars) have not run against Upstox.
+- **A clean-machine install.** Packaging is P2.4.
 
 Phase 0 gate, as run locally: the suite leaves `data/` byte-identical (hash before and after); `uvicorn` shows application `INFO` lines and writes `data/logs/terminal.log`; SIGTERM ends a running session with a `shutdown` end record in 0.3 s; after `kill -9` the restart reports the session as interrupted. The CI workflow exists but has not yet run on GitHub.
 
@@ -25,9 +36,9 @@ Bugs found and fixed while doing Phase 0 (none were in the audit):
 Left open from Phase 0:
 
 - **mypy** runs in CI as informational; 29 existing type errors in engine and data code are not yet cleared.
-- **Startup resume prompt (P0.4):** interrupted sessions are logged at startup and listed in the Live tab, and are never resumed silently. A dedicated prompt in the UI is deferred to the P1.5 frontend work.
+- **Startup resume prompt (P0.4):** done in P1.5: a banner reports interrupted sessions and links to the Live tab; nothing resumes silently.
 - **Test leftovers in `data/`** (`SIM__APITEST` files and three `*-SIM-APITEST-*.jsonl` journals) are still there, awaiting confirmation to delete.
-- Replay with no `replay_start` ends immediately with zero bars (the whole store is treated as warm-up). Harmless, but confusing; fix with the P1.5 "start paper" flow.
+- Replay with no `replay_start` ends immediately with zero bars (the whole store is treated as warm-up). The UI's one-click paper start always sets a start now; the API default still behaves this way.
 
 ---
 
