@@ -1,0 +1,3023 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "ema-cross-nifty-5m",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "clear"
+   ],
+   "prompt": "On NIFTY 5-minute bars, go long when the 9 EMA crosses above the 21 EMA. Exit when it crosses back below.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "ema21"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "sma-golden-cross-daily",
+   "split": "holdout",
+   "tags": [
+    "directional",
+    "positional",
+    "stock"
+   ],
+   "prompt": "Reliance daily chart: buy when the 50-day SMA crosses above the 200-day SMA and sell when it crosses back under. This is positional, hold overnight.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "RELIANCE",
+      "segment": "equity"
+     },
+     "timeframe": "1d",
+     "session": {
+      "square_off": null
+     },
+     "indicators": [
+      {
+       "id": "sma50",
+       "type": "SMA",
+       "params": {
+        "period": 50
+       }
+      },
+      {
+       "id": "sma200",
+       "type": "SMA",
+       "params": {
+        "period": 200
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "sma50",
+        "cmp": "crosses_above",
+        "right": "sma200"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "sma50",
+        "cmp": "crosses_below",
+        "right": "sma200"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "macd-cross-banknifty-15m",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "clear"
+   ],
+   "prompt": "BANKNIFTY 15 minute. Buy when the MACD line (12, 26, 9) crosses above the signal line while MACD is above zero. Exit when MACD crosses below the signal line.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "macd",
+       "type": "MACD",
+       "params": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "macd.macd",
+        "cmp": "crosses_above",
+        "right": "macd.signal"
+       },
+       {
+        "left": "macd.macd",
+        "cmp": ">",
+        "right": 0
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "macd.macd",
+        "cmp": "crosses_below",
+        "right": "macd.signal"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "rsi-oversold-bounce",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "stop"
+   ],
+   "prompt": "On NIFTY 15-minute, buy when RSI(14) crosses back above 30. Exit when RSI is above 60. Stop loss 0.5%.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": "crosses_above",
+        "right": 30
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 60
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "percent",
+        "value": 0.5
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "bollinger-breakout",
+   "split": "holdout",
+   "tags": [
+    "directional",
+    "multi-output"
+   ],
+   "prompt": "Nifty 5 min: enter long when the close crosses above the upper Bollinger Band (20, 2). Get out when the close crosses below the middle band.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "bb",
+       "type": "BOLLINGER",
+       "params": {
+        "period": 20,
+        "std_dev": 2.0
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "bb.upper"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "bb.middle"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "supertrend-flip",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "multi-output"
+   ],
+   "prompt": "BANKNIFTY 5-minute. Go long when the close crosses above the Supertrend (10, 3) line; exit when the close crosses below it.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "st",
+       "type": "SUPERTREND",
+       "params": {
+        "period": 10,
+        "multiplier": 3.0
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "st.supertrend"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "st.supertrend"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "donchian-breakout-volume",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "stop",
+    "target",
+    "volume"
+   ],
+   "prompt": "NIFTY 5m: buy when the close is at or above the 20-bar Donchian upper channel and the 20-bar volume ratio is above 2. Exit when the close drops below the Donchian middle line. Stop at 2 times ATR(14), target 1.5%.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "dc",
+       "type": "DONCHIAN",
+       "params": {
+        "period": 20
+       }
+      },
+      {
+       "id": "vr",
+       "type": "VOLUMERATIO",
+       "params": {
+        "period": 20
+       }
+      },
+      {
+       "id": "atr",
+       "type": "ATR",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">=",
+        "right": "dc.upper"
+       },
+       {
+        "left": "vr",
+        "cmp": ">",
+        "right": 2
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "<",
+        "right": "dc.middle"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "atr_multiple",
+        "value": 2.0,
+        "ref": "atr"
+       },
+       "target": {
+        "type": "percent",
+        "value": 1.5
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "adx-trend-filter",
+   "split": "holdout",
+   "tags": [
+    "directional",
+    "multi-output",
+    "compound"
+   ],
+   "prompt": "On BANKNIFTY 15-minute, buy when the 20 EMA is above the 50 EMA, ADX(14) is above 25 and +DI is above -DI. Exit when the 20 EMA goes below the 50 EMA.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "ema20",
+       "type": "EMA",
+       "params": {
+        "period": 20
+       }
+      },
+      {
+       "id": "ema50",
+       "type": "EMA",
+       "params": {
+        "period": 50
+       }
+      },
+      {
+       "id": "adx",
+       "type": "ADX",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema20",
+        "cmp": ">",
+        "right": "ema50"
+       },
+       {
+        "left": "adx.adx",
+        "cmp": ">",
+        "right": 25
+       },
+       {
+        "left": "adx.plus_di",
+        "cmp": ">",
+        "right": "adx.minus_di"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema20",
+        "cmp": "<",
+        "right": "ema50"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "cpr-breakout",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "context",
+    "risk"
+   ],
+   "prompt": "Nifty 5-minute CPR strategy: go long when the close crosses above the top central pivot (TC) with volume above its 20-bar average. Exit if the close crosses below the pivot. Max 2 trades a day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "vol_avg",
+       "type": "VOLUMESMA",
+       "params": {
+        "period": 20
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "tc"
+       },
+       {
+        "left": "volume",
+        "cmp": ">",
+        "right": "vol_avg"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "pivot"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 2
+     }
+    }
+   }
+  },
+  {
+   "id": "pdh-breakout",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "context",
+    "stop",
+    "target",
+    "risk"
+   ],
+   "prompt": "BANKNIFTY 5 min: buy when the close crosses above the previous day's high. Stop loss 100 points, target 200 points. One trade a day. No other exit.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "prev_day_high"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "points",
+        "value": 100
+       },
+       "target": {
+        "type": "points",
+        "value": 200
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   }
+  },
+  {
+   "id": "vwap-reclaim-short",
+   "split": "holdout",
+   "tags": [
+    "directional",
+    "short",
+    "context"
+   ],
+   "prompt": "Short NIFTY on the 5-minute chart when the close crosses below VWAP and RSI(14) is under 45. Cover when the close crosses back above VWAP.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "vwap"
+       },
+       {
+        "left": "rsi",
+        "cmp": "<",
+        "right": 45
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "vwap"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "stochastic-cross",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "multi-output"
+   ],
+   "prompt": "Nifty 15m: buy when Stochastic %K (14, 3, 3) crosses above %D while %K is below 20. Exit when %K is above 80.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "stoch",
+       "type": "STOCHASTIC",
+       "params": {
+        "k_period": 14,
+        "k_smooth": 3,
+        "d_period": 3
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "stoch.k",
+        "cmp": "crosses_above",
+        "right": "stoch.d"
+       },
+       {
+        "left": "stoch.k",
+        "cmp": "<",
+        "right": 20
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "stoch.k",
+        "cmp": ">",
+        "right": 80
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "psar-trend",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "multi-output"
+   ],
+   "prompt": "FINNIFTY 5-minute: go long when the close crosses above the Parabolic SAR (step 0.02, max 0.2), exit when the close crosses below it.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "FINNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "psar",
+       "type": "PSAR",
+       "params": {
+        "step": 0.02,
+        "max_step": 0.2
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "psar.psar"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "psar.psar"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "williams-r",
+   "split": "holdout",
+   "tags": [
+    "directional",
+    "negative-threshold"
+   ],
+   "prompt": "On SENSEX 15-minute bars buy when Williams %R(14) crosses above -80 and exit when it is above -20.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "SENSEX",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "wr",
+       "type": "WILLIAMSR",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "wr",
+        "cmp": "crosses_above",
+        "right": -80
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "wr",
+        "cmp": ">",
+        "right": -20
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "ema-sma-rsi-rising",
+   "split": "dev",
+   "tags": [
+    "directional",
+    "compound",
+    "rising"
+   ],
+   "prompt": "BANKNIFTY 5 min. Enter long when the 9 EMA crosses above the 50 SMA, RSI(14) is above 50 and RSI is rising. Exit when the 9 EMA crosses below the 50 SMA.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "sma50",
+       "type": "SMA",
+       "params": {
+        "period": 50
+       }
+      },
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "sma50"
+       },
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 50
+       },
+       {
+        "left": "rsi",
+        "cmp": "rising",
+        "right": 0
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "sma50"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "sell-atm-pe-bullish",
+   "split": "dev",
+   "tags": [
+    "options",
+    "single-leg",
+    "stop"
+   ],
+   "prompt": "BankNifty 5-minute: when the 9 EMA crosses above the 50 SMA, sell the ATM put of the current monthly expiry. Exit when the 9 EMA crosses back below the 50 SMA. Stop loss 30% on the premium.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "sma50",
+       "type": "SMA",
+       "params": {
+        "period": 50
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "sma50"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "sma50"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_monthly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 30
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "short-straddle-930",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "time-entry",
+    "session"
+   ],
+   "prompt": "Sell an ATM straddle on NIFTY at 9:30 every day, current weekly expiry, with a 30% stop loss on each leg, and square off at 3:10 pm.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "session": {
+      "start": "09:30",
+      "end": "15:05",
+      "square_off": "15:10"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": 0
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "ce",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 30
+       }
+      },
+      {
+       "id": "pe",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 30
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   },
+   "skip": [
+    "timeframe"
+   ],
+   "check_session": [
+    "start",
+    "square_off"
+   ]
+  },
+  {
+   "id": "long-straddle-squeeze",
+   "split": "holdout",
+   "tags": [
+    "options",
+    "multi-leg",
+    "target",
+    "stop"
+   ],
+   "prompt": "Buy an ATM straddle on BANKNIFTY (current weekly) when the Bollinger bandwidth (20, 2) on the 15-minute chart is below 0.006. Target 40% on each leg, stop 25% on each leg.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "bb",
+       "type": "BOLLINGER",
+       "params": {
+        "period": 20,
+        "std_dev": 2.0
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "bb.bandwidth",
+        "cmp": "<",
+        "right": 0.006
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "ce",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 25
+       },
+       "target": {
+        "type": "percent",
+        "value": 40
+       }
+      },
+      {
+       "id": "pe",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 25
+       },
+       "target": {
+        "type": "percent",
+        "value": 40
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "bull-call-spread",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "strike"
+   ],
+   "prompt": "Nifty 15-minute: on a bullish 9/21 EMA crossover buy the ATM call and sell the call 2 strikes out of the money, both current weekly.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "long_call",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "short_call",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+2",
+        "expiry": "current_weekly"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "bear-put-spread",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "strike"
+   ],
+   "prompt": "On NIFTY 15m when the 9 EMA crosses below the 21 EMA, buy the ATM put and sell the put two strikes out of the money, weekly expiry.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "long_put",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "short_put",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "OTM+2",
+        "expiry": "current_weekly"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "iron-condor",
+   "split": "holdout",
+   "tags": [
+    "options",
+    "multi-leg",
+    "strike",
+    "risk"
+   ],
+   "prompt": "Nifty 5-minute iron condor when the Bollinger bandwidth (20, 2) is below 0.006: sell the call and the put 2 strikes OTM, buy the call and the put 4 strikes OTM, current weekly expiry, one trade a day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "bb",
+       "type": "BOLLINGER",
+       "params": {
+        "period": 20,
+        "std_dev": 2.0
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "bb.bandwidth",
+        "cmp": "<",
+        "right": 0.006
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "short_call",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+2",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "long_call",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+4",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "short_put",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "OTM+2",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "long_put",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "OTM+4",
+        "expiry": "current_weekly"
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   }
+  },
+  {
+   "id": "short-strangle-lots",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "time-entry",
+    "lots",
+    "session"
+   ],
+   "prompt": "Sell a BANKNIFTY strangle at 9:20: the call and the put 3 strikes OTM, next weekly expiry, 2 lots each. Stop loss 50% of premium per leg. Everything out by 3:00 pm.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "session": {
+      "start": "09:20",
+      "end": "14:55",
+      "square_off": "15:00"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": 0
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "ce",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 2,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+3",
+        "expiry": "next_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 50
+       }
+      },
+      {
+       "id": "pe",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 2,
+       "option": {
+        "right": "PE",
+        "strike_rule": "OTM+3",
+        "expiry": "next_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 50
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   },
+   "skip": [
+    "timeframe"
+   ],
+   "check_session": [
+    "start",
+    "square_off"
+   ]
+  },
+  {
+   "id": "buy-ce-pdh-breakout",
+   "split": "dev",
+   "tags": [
+    "options",
+    "single-leg",
+    "context",
+    "risk"
+   ],
+   "prompt": "BANKNIFTY 5-minute: when the close crosses above the previous day high, buy 1 lot of the ATM call (current weekly). Stop loss 20% of premium, target 40%. Max 2 trades per day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "prev_day_high"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 20
+       },
+       "target": {
+        "type": "percent",
+        "value": 40
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 2
+     }
+    }
+   }
+  },
+  {
+   "id": "buy-itm-pe-trail",
+   "split": "holdout",
+   "tags": [
+    "options",
+    "single-leg",
+    "strike",
+    "trail"
+   ],
+   "prompt": "Nifty 5 min: if the close crosses below the previous day's low, buy the put one strike in the money, current weekly. Use a 15% trailing stop on the premium, active from entry.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "prev_day_low"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ITM+1",
+        "expiry": "current_weekly"
+       },
+       "trail": {
+        "type": "percent",
+        "value": 15,
+        "activate_at": 0
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "covered-call",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "positional",
+    "stock"
+   ],
+   "prompt": "Reliance, daily bars, positional: when RSI(14) is above 55 buy the stock and sell a call 3 strikes OTM in the current monthly expiry. Exit both when RSI falls below 40.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "RELIANCE",
+      "segment": "equity"
+     },
+     "timeframe": "1d",
+     "session": {
+      "square_off": null
+     },
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 55
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": "<",
+        "right": 40
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      },
+      {
+       "id": "short_call",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+3",
+        "expiry": "current_monthly"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "delta-strangle",
+   "split": "dev",
+   "tags": [
+    "options",
+    "multi-leg",
+    "time-entry",
+    "delta",
+    "session"
+   ],
+   "prompt": "Sell a 0.20 delta strangle on NIFTY (one call, one put, current weekly) at 9:45, square off at 15:15, at most one trade per day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "session": {
+      "start": "09:45",
+      "square_off": "15:15"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": 0
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "ce",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "DELTA:0.20",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "pe",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "DELTA:0.20",
+        "expiry": "current_weekly"
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   },
+   "skip": [
+    "timeframe"
+   ]
+  },
+  {
+   "id": "fixed-strike-call-sell",
+   "split": "holdout",
+   "tags": [
+    "options",
+    "single-leg",
+    "strike",
+    "stop"
+   ],
+   "prompt": "Sell the NIFTY 25000 call, current monthly expiry, whenever RSI(14) on the 15-minute chart is above 70. Stop loss 40% of premium.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 70
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "STRIKE:25000",
+        "expiry": "current_monthly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 40
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "atr-stop-with-trail",
+   "split": "dev",
+   "tags": [
+    "risk",
+    "stop",
+    "trail"
+   ],
+   "prompt": "NIFTY 5m, long on a 9/21 EMA bullish crossover. Stop loss 1.5 times ATR(14). Trail by 0.5% once the trade is 0.5% in profit. No signal exit.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      },
+      {
+       "id": "atr",
+       "type": "ATR",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "atr_multiple",
+        "value": 1.5,
+        "ref": "atr"
+       },
+       "trail": {
+        "type": "percent",
+        "value": 0.5,
+        "activate_at": 0.5
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "daily-loss-and-profit-caps",
+   "split": "dev",
+   "tags": [
+    "risk"
+   ],
+   "prompt": "BankNifty 5 min, buy when the 9 EMA crosses above the 21 EMA, exit on the reverse cross. Stop trading for the day after losing 5000 rupees or after making 10000. Maximum 3 trades a day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "ema21"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ],
+     "risk": {
+      "max_loss_per_day": 5000,
+      "max_profit_per_day": 10000,
+      "max_trades_per_day": 3
+     }
+    }
+   }
+  },
+  {
+   "id": "re-entry-cooldown",
+   "split": "holdout",
+   "tags": [
+    "risk",
+    "re-entry"
+   ],
+   "prompt": "Nifty 15m: buy when RSI(14) crosses above 30; exit when RSI is above 60. Allow re-entry up to 2 times a day, waiting 4 bars after an exit.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": "crosses_above",
+        "right": 30
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 60
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ],
+     "risk": {
+      "re_entry": {
+       "enabled": true,
+       "max": 2,
+       "cooldown_bars": 4
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "session-window",
+   "split": "dev",
+   "tags": [
+    "session"
+   ],
+   "prompt": "Trade the 9/21 EMA crossover long on NIFTY 5-minute, but only take entries between 9:45 and 14:30, and square everything off at 15:20. Exit on the opposite cross.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "session": {
+      "start": "09:45",
+      "end": "14:30",
+      "square_off": "15:20"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "ema21"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "positional-swing-stock",
+   "split": "dev",
+   "tags": [
+    "positional",
+    "stock",
+    "stop",
+    "compound"
+   ],
+   "prompt": "Swing trade HDFCBANK on daily candles: buy when the close crosses above the 20-day SMA with RSI(14) above 50; exit when the close crosses below the 20-day SMA. Carry positions overnight. 5% stop loss.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "HDFCBANK",
+      "segment": "equity"
+     },
+     "timeframe": "1d",
+     "session": {
+      "square_off": null
+     },
+     "indicators": [
+      {
+       "id": "sma20",
+       "type": "SMA",
+       "params": {
+        "period": 20
+       }
+      },
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "sma20"
+       },
+       {
+        "left": "rsi",
+        "cmp": ">",
+        "right": 50
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "sma20"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "percent",
+        "value": 5
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "short-two-lots-points",
+   "split": "holdout",
+   "tags": [
+    "short",
+    "lots",
+    "stop",
+    "target"
+   ],
+   "prompt": "Short 2 lots of BANKNIFTY on the 5-minute chart when the 9 EMA crosses below the 21 EMA. Target 150 points, stop 75 points. Also exit on the bullish cross.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_below",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "equity",
+       "lots": 2,
+       "stop_loss": {
+        "type": "points",
+        "value": 75
+       },
+       "target": {
+        "type": "points",
+        "value": 150
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "hourly-macd-histogram",
+   "split": "dev",
+   "tags": [
+    "positional",
+    "timeframe",
+    "multi-output",
+    "compound"
+   ],
+   "prompt": "On the 1-hour NIFTY chart, buy when the close is above the 200 EMA and the MACD (12, 26, 9) histogram crosses above zero. Exit when the histogram crosses below zero. Positional, carry overnight.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "1h",
+     "session": {
+      "square_off": null
+     },
+     "indicators": [
+      {
+       "id": "ema200",
+       "type": "EMA",
+       "params": {
+        "period": 200
+       }
+      },
+      {
+       "id": "macd",
+       "type": "MACD",
+       "params": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": "ema200"
+       },
+       {
+        "left": "macd.histogram",
+        "cmp": "crosses_above",
+        "right": 0
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "macd.histogram",
+        "cmp": "crosses_below",
+        "right": 0
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "volume-confirmation-stock",
+   "split": "dev",
+   "tags": [
+    "stock",
+    "volume",
+    "compound"
+   ],
+   "prompt": "Reliance 15-minute, intraday: buy when the close crosses above the 20 EMA and the 20-bar volume ratio is above 2. Exit when the close crosses below the 20 EMA.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "RELIANCE",
+      "segment": "equity"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "ema20",
+       "type": "EMA",
+       "params": {
+        "period": 20
+       }
+      },
+      {
+       "id": "vr",
+       "type": "VOLUMERATIO",
+       "params": {
+        "period": 20
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "ema20"
+       },
+       {
+        "left": "vr",
+        "cmp": ">",
+        "right": 2
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "ema20"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "hinglish-bn-buy-ce",
+   "split": "dev",
+   "tags": [
+    "hinglish",
+    "options",
+    "session"
+   ],
+   "prompt": "BN me 5 min chart pe 9 aur 21 EMA ka bullish crossover aaye to ATM CE lena hai weekly expiry ka, SL 30% premium pe, 3:10 tak exit kar dena.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "ema9",
+       "type": "EMA",
+       "params": {
+        "period": 9
+       }
+      },
+      {
+       "id": "ema21",
+       "type": "EMA",
+       "params": {
+        "period": 21
+       }
+      }
+     ],
+     "session": {
+      "end": "15:05",
+      "square_off": "15:10"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "ema9",
+        "cmp": "crosses_above",
+        "right": "ema21"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 30
+       }
+      }
+     ]
+    }
+   },
+   "check_session": [
+    "square_off"
+   ]
+  },
+  {
+   "id": "hinglish-rsi-short",
+   "split": "holdout",
+   "tags": [
+    "hinglish",
+    "short",
+    "stop"
+   ],
+   "prompt": "Nifty 15 min: RSI(14) 70 ke neeche cross kare to short karna hai. RSI 40 ke neeche aa jaye to cover kar do. SL 0.5%.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "rsi",
+       "type": "RSI",
+       "params": {
+        "period": 14
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": "crosses_below",
+        "right": 70
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "rsi",
+        "cmp": "<",
+        "right": 40
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "equity",
+       "lots": 1,
+       "stop_loss": {
+        "type": "percent",
+        "value": 0.5
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shorthand-pdl-breakdown",
+   "split": "dev",
+   "tags": [
+    "shorthand",
+    "options",
+    "context",
+    "risk"
+   ],
+   "prompt": "BNF 5m PDL breakdown: close PDL ke neeche cross kare to ATM PE buy, weekly. SL 25%, TGT 50% premium pe. 1 trade/day.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "prev_day_low"
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 25
+       },
+       "target": {
+        "type": "percent",
+        "value": 50
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   }
+  },
+  {
+   "id": "hinglish-straddle",
+   "split": "dev",
+   "tags": [
+    "hinglish",
+    "options",
+    "multi-leg",
+    "time-entry",
+    "session"
+   ],
+   "prompt": "Roz 9:20 pe Nifty ka ATM straddle sell karna hai, weekly expiry, dono legs pe 25% SL, 3:15 pe square off.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "session": {
+      "start": "09:20",
+      "square_off": "15:15"
+     },
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": 0
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "ce",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 25
+       }
+      },
+      {
+       "id": "pe",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 25
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   },
+   "skip": [
+    "timeframe"
+   ]
+  },
+  {
+   "id": "shorthand-supertrend-ema",
+   "split": "holdout",
+   "tags": [
+    "shorthand",
+    "compound",
+    "multi-output"
+   ],
+   "prompt": "FinNifty 5m: close ST(10,3) ke upar cross kare aur price 20 EMA ke upar ho to long. Close ST ke neeche cross kare to exit.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "FINNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "st",
+       "type": "SUPERTREND",
+       "params": {
+        "period": 10,
+        "multiplier": 3.0
+       }
+      },
+      {
+       "id": "ema20",
+       "type": "EMA",
+       "params": {
+        "period": 20
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "st.supertrend"
+       },
+       {
+        "left": "close",
+        "cmp": ">",
+        "right": "ema20"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "st.supertrend"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "hinglish-macd-sell-pe",
+   "split": "dev",
+   "tags": [
+    "hinglish",
+    "options",
+    "multi-output",
+    "stop"
+   ],
+   "prompt": "Banknifty 15m me MACD(12,26,9) bullish crossover pe 1 lot ATM PE sell karo monthly expiry ka, SL 35% premium, ulta crossover aaye to exit.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "BANKNIFTY",
+      "segment": "index"
+     },
+     "timeframe": "15m",
+     "indicators": [
+      {
+       "id": "macd",
+       "type": "MACD",
+       "params": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "macd.macd",
+        "cmp": "crosses_above",
+        "right": "macd.signal"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "macd.macd",
+        "cmp": "crosses_below",
+        "right": "macd.signal"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_monthly"
+       },
+       "stop_loss": {
+        "type": "percent",
+        "value": 35
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "hinglish-dma-positional",
+   "split": "dev",
+   "tags": [
+    "hinglish",
+    "positional",
+    "stock"
+   ],
+   "prompt": "TCS daily: close 50 DMA ke upar cross kare to kharidna hai, close 50 DMA ke neeche cross kare to bech dena. Positional hai, overnight hold.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "TCS",
+      "segment": "equity"
+     },
+     "timeframe": "1d",
+     "session": {
+      "square_off": null
+     },
+     "indicators": [
+      {
+       "id": "sma50",
+       "type": "SMA",
+       "params": {
+        "period": 50
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_above",
+        "right": "sma50"
+       }
+      ]
+     },
+     "exit": {
+      "op": "OR",
+      "conditions": [
+       {
+        "left": "close",
+        "cmp": "crosses_below",
+        "right": "sma50"
+       }
+      ]
+     },
+     "legs": [
+      {
+       "id": "leg1",
+       "action": "BUY",
+       "kind": "equity",
+       "lots": 1
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "shorthand-iron-fly",
+   "split": "holdout",
+   "tags": [
+    "shorthand",
+    "options",
+    "multi-leg",
+    "strike",
+    "risk"
+   ],
+   "prompt": "Nifty 5m BB(20,2) squeeze: bandwidth 0.005 se kam ho to iron fly, yaani ATM CE aur ATM PE sell, 3 strike OTM CE aur PE buy, weekly expiry. Din me ek hi trade.",
+   "expect": {
+    "status": "ready",
+    "document": {
+     "instrument": {
+      "symbol": "NIFTY",
+      "segment": "index"
+     },
+     "timeframe": "5m",
+     "indicators": [
+      {
+       "id": "bb",
+       "type": "BOLLINGER",
+       "params": {
+        "period": 20,
+        "std_dev": 2.0
+       }
+      }
+     ],
+     "entry": {
+      "op": "AND",
+      "conditions": [
+       {
+        "left": "bb.bandwidth",
+        "cmp": "<",
+        "right": 0.005
+       }
+      ]
+     },
+     "exit": null,
+     "legs": [
+      {
+       "id": "short_call",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "short_put",
+       "action": "SELL",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "ATM",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "long_call",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "CE",
+        "strike_rule": "OTM+3",
+        "expiry": "current_weekly"
+       }
+      },
+      {
+       "id": "long_put",
+       "action": "BUY",
+       "kind": "option",
+       "lots": 1,
+       "option": {
+        "right": "PE",
+        "strike_rule": "OTM+3",
+        "expiry": "current_weekly"
+       }
+      }
+     ],
+     "risk": {
+      "max_trades_per_day": 1
+     }
+    }
+   }
+  },
+  {
+   "id": "clarify-no-instrument",
+   "split": "dev",
+   "tags": [
+    "clarify"
+   ],
+   "prompt": "Buy when the 9 EMA crosses above the 21 EMA and sell on the opposite cross.",
+   "expect": {
+    "status": "needs_clarification",
+    "note": "No instrument is named and there is no sensible default."
+   }
+  },
+  {
+   "id": "clarify-buy-the-dip",
+   "split": "holdout",
+   "tags": [
+    "clarify"
+   ],
+   "prompt": "I want to buy the dip on Nifty and book profit on the bounce.",
+   "expect": {
+    "status": "needs_clarification",
+    "note": "No rule defines the dip or the bounce."
+   }
+  },
+  {
+   "id": "clarify-range-bound",
+   "split": "dev",
+   "tags": [
+    "clarify"
+   ],
+   "prompt": "Sell options when the market is range bound.",
+   "expect": {
+    "status": "needs_clarification",
+    "note": "No instrument, no definition of range bound, no structure."
+   }
+  },
+  {
+   "id": "clarify-which-option",
+   "split": "dev",
+   "tags": [
+    "clarify",
+    "options"
+   ],
+   "prompt": "On BankNifty 5 minute, trade options on a 9/21 EMA crossover.",
+   "expect": {
+    "status": "needs_clarification",
+    "note": "Buying or selling, calls or puts, and which crossover direction are all open."
+   }
+  },
+  {
+   "id": "unsupported-news",
+   "split": "dev",
+   "tags": [
+    "unsupported"
+   ],
+   "prompt": "Buy Reliance whenever there is positive news about the company and sell on negative news.",
+   "expect": {
+    "status": "unsupported",
+    "note": "News is not an available input."
+   }
+  },
+  {
+   "id": "unsupported-pairs",
+   "split": "holdout",
+   "tags": [
+    "unsupported"
+   ],
+   "prompt": "Pairs trade: go long HDFCBANK and short ICICIBANK when the spread between them widens beyond 2 standard deviations.",
+   "expect": {
+    "status": "unsupported",
+    "note": "Signals are read from one instrument; a spread between two is not expressible."
+   }
+  },
+  {
+   "id": "unsupported-order-book",
+   "split": "dev",
+   "tags": [
+    "unsupported"
+   ],
+   "prompt": "Scalp Nifty futures using order book imbalance: buy when the bid quantity is 3 times the ask quantity across the top 5 levels.",
+   "expect": {
+    "status": "unsupported",
+    "note": "Order-book data is not available."
+   }
+  }
+ ]
+}

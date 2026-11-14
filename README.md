@@ -239,6 +239,26 @@ uv sync --extra dev          # install the locked dependencies (uv.lock)
 .venv/bin/mypy               # type check (informational for now)
 ```
 
+### Measuring the assistant
+
+`evals/cases.json` holds 50 strategy descriptions with gold specs: clear rules,
+option structures, risk and session details, Hinglish and trader shorthand,
+requests that should prompt a question, and ones that cannot be expressed.
+About 30% are a holdout.
+
+```bash
+.venv/bin/python -m backend.evals.runner --split dev --limit 10 --confirm-spend   # smoke check
+.venv/bin/python -m backend.evals.runner --split dev --confirm-spend --record      # tune against this
+.venv/bin/python -m backend.evals.runner --split holdout --confirm-spend --record  # report this
+.venv/bin/python -m backend.evals.runner --replay evals/recordings/<file>.json     # re-score, free
+```
+
+A live run calls the model and costs money, hence `--confirm-spend`. Reports
+land in `evals/reports/`. Tune prompts against `dev` only; the holdout number
+is the one to quote, and only if the prompt was not tuned on it. Scoring
+compares meaning, not spelling (indicator names, condition order, `a < b`
+versus `b > a`), and only the fields a prompt actually states.
+
 Frontend tests:
 
 ```bash

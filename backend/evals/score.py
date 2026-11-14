@@ -97,7 +97,9 @@ def score(case: dict[str, Any], outcome: Outcome) -> Score:
             want = {k: gold["risk"][k] for k in keys}
             got = {k: actual["risk"][k] for k in keys}
         elif name == "session":
-            keys = list(gold_doc["session"]) or ["intraday"]
+            # `check_session` narrows the comparison when the gold had to pick a
+            # value the prompt does not state (an end time, to stay valid).
+            keys = case.get("check_session") or list(gold_doc["session"])
             keys = ["intraday", *[k for k in keys if k != "intraday"]]
             want = {k: gold["session"][k] for k in keys}
             got = {k: actual["session"][k] for k in keys}
@@ -113,7 +115,7 @@ def score(case: dict[str, Any], outcome: Outcome) -> Score:
 
 
 def _flat_keys(risk: dict[str, Any]) -> list[str]:
-    out = []
+    out: list[str] = []
     for key, value in risk.items():
         if key == "re_entry" and isinstance(value, dict):
             out.extend(f"re_entry.{k}" for k in value)
