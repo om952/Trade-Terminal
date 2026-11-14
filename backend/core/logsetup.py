@@ -64,6 +64,16 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 # Shorter values are too likely to collide with ordinary text.
 _MIN_LITERAL_LENGTH = 8
 
+# Secrets that do not live in settings (LLM keys read from the OS keychain).
+_registered: set[str] = set()
+
+
+def register_secret(value: str) -> None:
+    """Redact `value` from every log line from now on."""
+    value = value.strip()
+    if len(value) >= _MIN_LITERAL_LENGTH:
+        _registered.add(value)
+
 
 def _configured_secrets() -> list[str]:
     """Secret values from settings, so they are caught even outside a known pattern."""
@@ -73,7 +83,7 @@ def _configured_secrets() -> list[str]:
         settings.kite_api_secret,
         settings.telegram_bot_token,
     )
-    values = {c.get_secret_value().strip() for c in candidates}
+    values = {c.get_secret_value().strip() for c in candidates} | _registered
     # Longest first, so a secret that contains another is replaced whole.
     return sorted((v for v in values if len(v) >= _MIN_LITERAL_LENGTH), key=len, reverse=True)
 
@@ -97,8 +107,12 @@ class RedactingFormatter(logging.Formatter):
     def __init__(self, fmt: str = LOG_FORMAT, datefmt: str | None = None) -> None:
         super().__init__(fmt, datefmt)
         self._secrets = _configured_secrets()
+        self._registered_seen = len(_registered)
 
     def format(self, record: logging.LogRecord) -> str:
+        if len(_registered) != self._registered_seen:     # a key was added since
+            self._secrets = _configured_secrets()
+            self._registered_seen = len(_registered)
         return redact(super().format(record), self._secrets)
 
 

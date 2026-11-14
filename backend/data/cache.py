@@ -176,7 +176,7 @@ def derive(base: pd.DataFrame, tf: Timeframe, open_at: time = cal.MARKET_OPEN) -
     offset = ((ts - anchor) // pd.Timedelta(minutes=1)).astype("int64")
     bucket = anchor + pd.to_timedelta((offset // minutes) * minutes, unit="min")
 
-    frame = base.assign(timestamp=ts, _bucket=bucket.values).sort_values("timestamp")
+    frame = base.assign(timestamp=ts, _bucket=bucket).sort_values("timestamp")
     grouped = frame.groupby("_bucket", sort=True)
     out = pd.DataFrame(
         {

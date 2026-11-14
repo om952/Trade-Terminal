@@ -558,6 +558,42 @@ def jobs_cancel(job_id: str) -> dict:
         return job_runner.cancel(job_id)
 
 
+# ---------------------------------------------------------------------------
+# LLM settings
+# ---------------------------------------------------------------------------
+
+class LLMKeyRequest(BaseModel):
+    provider: Literal["anthropic"] = "anthropic"
+    api_key: str = Field(min_length=20, max_length=500)
+
+
+@app.get("/api/llm/status")
+def llm_status() -> dict:
+    from backend.llm import factory
+
+    return factory.status()
+
+
+@app.put("/api/llm/key")
+def llm_set_key(req: LLMKeyRequest) -> dict:
+    """Store the key in the OS keychain. It is never returned or logged."""
+    from backend.llm import factory, keys
+
+    try:
+        keys.set_key(req.provider, req.api_key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return factory.status()
+
+
+@app.delete("/api/llm/key")
+def llm_delete_key(provider: Literal["anthropic"] = "anthropic") -> dict:
+    from backend.llm import factory, keys
+
+    keys.delete_key(provider)
+    return factory.status()
+
+
 @app.get("/api/costs/preview")
 def cost_preview(
     segment: Literal[

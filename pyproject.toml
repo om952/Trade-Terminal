@@ -16,6 +16,8 @@ dependencies = [
     "pyarrow>=20.0",
     "websockets>=15.0",
     "protobuf>=6.0",
+    "anthropic>=2.8.0",
+    "keyring>=25.7.0",
 ]
 
 [project.optional-dependencies]
