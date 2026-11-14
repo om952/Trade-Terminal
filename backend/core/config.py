@@ -90,6 +90,11 @@ class Settings(BaseSettings):
         return self.data_dir / "logs"
 
     @property
+    def app_db_path(self) -> Path:
+        """App state: strategies, versions, runs, jobs (SQLite)."""
+        return self.data_dir / "app.sqlite"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "terminal.duckdb"
 
