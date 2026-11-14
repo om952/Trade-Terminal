@@ -19,10 +19,10 @@ import json
 import logging
 import signal
 import sys
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
-from backend.core.config import IST, Mode, settings
+from backend.core.config import IST, Mode
 from backend.live import journal as J
 from backend.live.session import PaperSession, SessionConfig
 from backend.strategy import templates
@@ -238,11 +238,9 @@ def main() -> None:
     p_show.set_defaults(func=cmd_show)
 
     args = parser.parse_args()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    from backend.core.logsetup import configure_logging
+
+    configure_logging()
     args.func(args)
 
 

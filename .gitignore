@@ -9,6 +9,8 @@ config/secrets.*
 # Market data and journals — large, regenerable, and account-identifying
 data/parquet/
 data/journal/
+data/logs/
+data/.upstox_token.json
 *.duckdb
 *.duckdb.wal
 *.sqlite

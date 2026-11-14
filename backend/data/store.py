@@ -13,13 +13,24 @@ to delete, not a surgical DELETE against a giant table.
 Writes are idempotent. Re-fetching a range you already have produces a
 byte-identical file, which is what makes the Phase 1 reproducibility gate
 meaningful.
+
+Writes are also atomic and serialized. A candle file is replaced with
+`os.replace` from a fully written, fsynced temp file, so a crash mid-write
+leaves the previous file intact rather than a truncated one. The
+read-merge-write cycle runs under a per-file lock, so two concurrent fetches of
+the same instrument cannot each read the old file and have the second overwrite
+the first's bars. The lock is in-process, which is sufficient because DuckDB
+already limits the store to one writer process.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
+import uuid
+from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
 
@@ -34,6 +45,13 @@ CANDLE_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "oi"]
 
 _db: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
+
+# One lock per candle file, created on demand. RLock so a locked section may
+# call another store function on the same file.
+_file_locks: defaultdict[tuple[str, str], threading.RLock] = defaultdict(threading.RLock)
+_file_locks_guard = threading.Lock()
+
+TMP_SUFFIX = ".tmp"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS instruments (
@@ -85,8 +103,8 @@ def get_db() -> duckdb.DuckDBPyConnection:
                 # as a baffling fixture failure several layers up, so name it here.
                 raise RuntimeError(
                     f"Cannot open {settings.db_path}: another process holds it.\n"
-                    f"DuckDB allows only one writer at a time — stop the API server "
-                    f"before running the tests, or vice versa:\n"
+                    f"DuckDB allows only one writer at a time, so stop the other "
+                    f"process (the API server or a CLI command) first:\n"
                     f"    pkill -f 'uvicorn backend.api.main'\n"
                     f"Original error: {exc}"
                 ) from exc
@@ -118,6 +136,39 @@ def candle_path(instrument_key: str, timeframe: str) -> Path:
     d = settings.parquet_dir / "candles" / timeframe
     d.mkdir(parents=True, exist_ok=True)
     return d / f"{_safe(instrument_key)}.parquet"
+
+
+def _file_lock(instrument_key: str, timeframe: str) -> threading.RLock:
+    with _file_locks_guard:
+        return _file_locks[(instrument_key, timeframe)]
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Make a rename durable. Not supported on Windows, where it is skipped."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write `df` to `path` so a reader sees the old file or the new one, never a mix."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}{TMP_SUFFIX}")
+    try:
+        df.to_parquet(tmp, index=False, compression="snappy")
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    _fsync_dir(path.parent)
 
 
 def _normalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -163,24 +214,31 @@ def write_candles(
     incoming = _normalize(df)
     path = candle_path(instrument_key, timeframe)
 
-    if path.exists():
-        existing = pd.read_parquet(path)
-        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True).dt.tz_convert(IST)
-        combined = pd.concat([existing, incoming], ignore_index=True)
-        combined = combined.sort_values("timestamp", kind="stable")
-        combined = combined.drop_duplicates(subset="timestamp", keep="last").reset_index(drop=True)
-    else:
-        combined = incoming
+    with _file_lock(instrument_key, timeframe):
+        if path.exists():
+            existing = pd.read_parquet(path)
+            existing["timestamp"] = (
+                pd.to_datetime(existing["timestamp"], utc=True).dt.tz_convert(IST)
+            )
+            combined = pd.concat([existing, incoming], ignore_index=True)
+            combined = combined.sort_values("timestamp", kind="stable")
+            combined = (
+                combined.drop_duplicates(subset="timestamp", keep="last").reset_index(drop=True)
+            )
+        else:
+            combined = incoming
 
-    combined.to_parquet(path, index=False, compression="snappy")
-    _update_coverage(instrument_key, timeframe, combined, source)
+        _atomic_write_parquet(combined, path)
+        _update_coverage(instrument_key, timeframe, combined, source)
     return len(combined)
 
 
 def _update_coverage(
     instrument_key: str, timeframe: str, df: pd.DataFrame, source: str
 ) -> None:
-    get_db().execute(
+    # A cursor per call: the shared connection object is not safe to use from
+    # several threads at once, and writes for different files run in parallel.
+    get_db().cursor().execute(
         """INSERT OR REPLACE INTO coverage
            (instrument_key, timeframe, first_bar, last_bar, bar_count, updated_at, source)
            VALUES (?,?,?,?,?,?,?)""",
@@ -229,16 +287,28 @@ def _as_ts(value: date | datetime, end_of_day: bool = False) -> pd.Timestamp:
 
 
 def read_coverage(instrument_key: str, timeframe: str) -> dict:
-    row = get_db().execute(
+    # Fetched through pandas: DuckDB's row API needs the optional `pytz` package
+    # to return a TIMESTAMPTZ, and raises without it. The frame path does not.
+    frame = get_db().cursor().execute(
         """SELECT first_bar, last_bar, bar_count, updated_at, source
            FROM coverage WHERE instrument_key = ? AND timeframe = ?""",
         [instrument_key, timeframe],
-    ).fetchone()
-    if not row:
+    ).df()
+    if frame.empty:
         return {}
+    row = frame.iloc[0]
+
+    def _ist(value) -> datetime:
+        ts = pd.Timestamp(value)
+        ts = ts.tz_localize("UTC") if ts.tz is None else ts
+        return ts.tz_convert(IST).to_pydatetime()
+
     return {
-        "first_bar": row[0], "last_bar": row[1], "bar_count": row[2],
-        "updated_at": row[3], "source": row[4],
+        "first_bar": _ist(row["first_bar"]),
+        "last_bar": _ist(row["last_bar"]),
+        "bar_count": int(row["bar_count"]),
+        "updated_at": _ist(row["updated_at"]),
+        "source": row["source"],
     }
 
 
@@ -250,11 +320,12 @@ def all_coverage() -> pd.DataFrame:
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:
     path = candle_path(instrument_key, timeframe)
-    path.unlink(missing_ok=True)
-    get_db().execute(
-        "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
-        [instrument_key, timeframe],
-    )
+    with _file_lock(instrument_key, timeframe):
+        path.unlink(missing_ok=True)
+        get_db().cursor().execute(
+            "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
+            [instrument_key, timeframe],
+        )
 
 
 def stored_instruments(timeframe: str | None = None) -> list[tuple[str, str]]:

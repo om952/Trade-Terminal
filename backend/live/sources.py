@@ -124,7 +124,8 @@ class ReplaySource:
                 continue
 
             if self.speed > 0 and previous is not None:
-                _time.sleep((ts - previous).total_seconds() / self.speed)
+                if self._sleep((ts - previous).total_seconds() / self.speed):
+                    return
             previous = ts
 
             bar = Bar(
@@ -142,6 +143,20 @@ class ReplaySource:
             yield ClosedBar(bar=bar, tick_count=1)
 
         self.status.connected = False
+
+    def _sleep(self, seconds: float) -> bool:
+        """Sleep in short slices so `stop()` takes effect promptly. True if stopped.
+
+        A paced replay waits out overnight and weekend gaps too; one long sleep
+        there would hold a stop request, and a shutdown, for minutes.
+        """
+        deadline = _time.monotonic() + seconds
+        while not self._stopped:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
+            _time.sleep(min(0.25, remaining))
+        return self._stopped
 
     def stop(self) -> None:
         self._stopped = True

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+from html import escape
 
 import httpx
 
@@ -59,28 +60,37 @@ class Alerts:
             return False
 
     # -- shaped messages -----------------------------------------------------
+    #
+    # Messages are sent with parse_mode=HTML, so every interpolated value is
+    # escaped. Telegram rejects the whole message on an unbalanced "<", and a
+    # strategy name or an exception text can contain one (names will be
+    # LLM-authored, and errors quote comparisons such as "qty < 0").
 
     def session_start(self, name: str, symbol: str, timeframe: str, mode: str) -> None:
-        self.send(f"▶️ <b>{mode.upper()}</b> started\n{name}\n{symbol} · {timeframe}")
+        self.send(
+            f"▶️ <b>{escape(mode.upper())}</b> started\n{escape(name)}\n"
+            f"{escape(symbol)} · {escape(timeframe)}"
+        )
 
     def entry(self, symbol: str, side: str, quantity: int, price: Decimal) -> None:
-        self.send(f"🟢 <b>ENTRY</b> {side} {quantity} {symbol} @ {price:.2f}")
+        self.send(f"🟢 <b>ENTRY</b> {escape(side)} {quantity} {escape(symbol)} @ {price:.2f}")
 
     def exit(self, symbol: str, quantity: int, price: Decimal, pnl: Decimal, reason: str) -> None:
         mark = "✅" if pnl >= 0 else "🔴"
         self.send(
-            f"{mark} <b>EXIT</b> {quantity} {symbol} @ {price:.2f}\n"
-            f"P&L {pnl:+.2f} · {reason}"
+            f"{mark} <b>EXIT</b> {quantity} {escape(symbol)} @ {price:.2f}\n"
+            f"P&amp;L {pnl:+.2f} · {escape(reason)}"
         )
 
     def blocked(self, reason: str, detail: str) -> None:
-        self.send(f"⛔️ Entry blocked: {reason}\n{detail}")
+        self.send(f"⛔️ Entry blocked: {escape(reason)}\n{escape(detail)}")
 
     def error(self, message: str) -> None:
-        self.send(f"⚠️ <b>ERROR</b>\n{message[:600]}")
+        # Truncate before escaping, so the cut cannot land inside an entity.
+        self.send(f"⚠️ <b>ERROR</b>\n{escape(message[:600])}")
 
     def session_end(self, name: str, trades: int, pnl: Decimal, reason: str) -> None:
         self.send(
-            f"⏹ <b>Session ended</b> ({reason})\n{name}\n"
+            f"⏹ <b>Session ended</b> ({escape(reason)})\n{escape(name)}\n"
             f"{trades} trade(s) · net {pnl:+.2f}"
         )

@@ -223,6 +223,15 @@ def recover(session_id: str, directory: Path | None = None) -> Recovered:
     for record in read(path):
         data = record.data
         if record.type is Event.SESSION_START:
+            if state.ended:
+                # A start after an end is a new run on the same journal: the id
+                # is stable per strategy, instrument and day, so stopping a
+                # session and starting it again appends here. That run began
+                # from scratch (a session only resumes a journal that has not
+                # ended), so everything before it is history, not state. Without
+                # this reset the earlier end record would mark a later crash as
+                # a clean finish, and the position it left open would be lost.
+                state = Recovered(session_id=session_id)
             state.started = True
             state.strategy = data.get("strategy", {})
             state.strategy_hash = data.get("strategy_hash", "")

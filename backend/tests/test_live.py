@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -480,6 +480,51 @@ def test_gate_crash_midway_recovers_to_the_uninterrupted_result(frame, tmp_path)
         assert abs(got.net_pnl - want.net_pnl) < Decimal("0.01")
 
 
+def test_gate_crash_after_a_same_day_restart_still_recovers(frame, tmp_path):
+    """Stop a session, start it again the same day, then crash: it must resume.
+
+    The session id is stable per strategy, instrument and day, so the second run
+    appends to the first run's journal, which already holds an end record. If
+    recovery took that record at face value the crash would look like a clean
+    finish: nothing reported as interrupted, and the next start would begin from
+    scratch, forgetting whatever the crashed run had open.
+    """
+    strategy = _strategy("ema_crossover")
+    reference = _backtest(strategy, frame)
+    split = len(frame) // 2
+    first, second = frame.iloc[:split], frame.iloc[split:]
+
+    # --- run 1: a complete session that ends normally ------------------------
+    _paper(strategy, frame, tmp_path, session_id="rerun").run()
+    assert J.recover("rerun", tmp_path).ended
+
+    # --- run 2: started fresh on the same journal, then killed ---------------
+    crashed = _paper(strategy, first, tmp_path, session_id="rerun")
+    crashed.config.flatten_at_session_end = False
+    crashed.run()
+    assert not crashed.live.resumed, "a finished session must restart from scratch"
+    before = len(crashed.portfolio.closed_trades)
+
+    path = tmp_path / "rerun.jsonl"
+    lines = path.read_text().splitlines(keepends=True)
+    assert json.loads(lines[-1])["type"] == "session_end"
+    path.write_text("".join(lines[:-1]))          # the process died before this
+
+    recovered = J.recover("rerun", tmp_path)
+    assert recovered.started and not recovered.ended, "the crash was read as a clean finish"
+    assert len(recovered.trades) == before, "state leaked in from the earlier, finished run"
+    assert recovered.bars_seen == len(first)
+
+    # --- run 3: resumes run 2 and lands where an uninterrupted run would -----
+    resumed = _paper(strategy, second, tmp_path, warmup=first, session_id="rerun")
+    resumed.run()
+
+    assert resumed.live.resumed
+    assert len(resumed.portfolio.closed_trades) == len(reference.trades)
+    assert abs(resumed.portfolio.realized_pnl - reference.portfolio.realized_pnl) < Decimal("0.01")
+    assert resumed.portfolio.fees_paid == reference.portfolio.fees_paid
+
+
 def test_gate_resume_warms_up_through_the_crash_point(frame, tmp_path):
     """A resumed session must be primed on every bar the crashed one processed.
 
@@ -594,9 +639,14 @@ def test_gate_replayed_orders_after_a_crash_do_not_double_fill(frame, tmp_path):
     assert tags, "no fills to test against"
     assert len(tags) == len(set(tags)), "duplicate client tags were issued"
 
+    # The process died instead of ending the session; otherwise the next start
+    # is a fresh run rather than a recovery, and nothing here is being tested.
+    _strip_session_end(tmp_path / "dupes.jsonl")
+
     replay = _paper(strategy, frame.iloc[400:420], tmp_path,
                     warmup=frame.iloc[:400], session_id="dupes")
     replay.run()
+    assert replay.live.resumed
 
     recovered = J.recover("dupes", tmp_path)
     all_tags = [
@@ -716,8 +766,8 @@ def test_streaming_context_is_visible_to_previous(frame):
     that back-tests fine would have taken zero trades live — and looked exactly
     like a strategy that found no setups.
     """
-    from backend.strategy.indicator_set import StreamingIndicatorSet
     from backend.indicators.base import PriceBar
+    from backend.strategy.indicator_set import StreamingIndicatorSet
 
     indicators = StreamingIndicatorSet([], [])
 
@@ -734,8 +784,8 @@ def test_streaming_context_is_visible_to_previous(frame):
 
 def test_streaming_readiness_ignores_context(frame):
     """Pivots are NaN on day one by definition; that must not stall warmup."""
-    from backend.strategy.indicator_set import StreamingIndicatorSet
     from backend.indicators.base import PriceBar
+    from backend.strategy.indicator_set import StreamingIndicatorSet
 
     indicators = StreamingIndicatorSet([], [])
     indicators.update(PriceBar(100.0, 101.0, 99.0, 100.5, 1000))

@@ -28,14 +28,13 @@ import pandas as pd
 from backend.core.interfaces import Side
 from backend.execution.costs import CostBreakdown, Segment, compute_costs, segment_for
 from backend.indicators.base import PriceBar
-from backend.strategy.option_book import MIN_TRADEABLE_PREMIUM, OptionBook
 from backend.strategy.engine import (
-    BarEvent,
     EngineResult,
     OrderIntent,
     StrategyEngine,
     bars_with_timestamps,
 )
+from backend.strategy.option_book import MIN_TRADEABLE_PREMIUM, OptionBook
 from backend.strategy.risk import RiskGuard
 from backend.strategy.schema import Strategy
 from backend.strategy.state import Portfolio, TradeReason

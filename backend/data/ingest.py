@@ -20,7 +20,6 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 
-from backend.core.config import IST, settings
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
 from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
@@ -31,12 +30,9 @@ DEFAULT_SYMBOLS = ["NIFTY", "BANKNIFTY", "SENSEX"]
 
 
 def _setup_logging(verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(levelname)-7s %(name)s: %(message)s",
-        stream=sys.stdout,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    from backend.core.logsetup import configure_logging
+
+    configure_logging(logging.DEBUG if verbose else logging.INFO, stream=sys.stdout)
 
 
 # ---------------------------------------------------------------------------

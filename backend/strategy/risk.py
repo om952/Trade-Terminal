@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 
-from backend.strategy.state import Portfolio, TradeReason
 from backend.strategy.schema import RiskRules
+from backend.strategy.state import Portfolio, TradeReason
 
 log = logging.getLogger(__name__)
 
