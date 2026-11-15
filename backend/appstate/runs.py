@@ -44,20 +44,23 @@ def record(
     job_id: str | None = None,
 ) -> str:
     """Store a finished run and return its id."""
+    from backend.strategy.family import family_key
+
     run_id = new_id()
+    family = family_key(document)
     blob = gzip.compress(to_json(payload).encode(), compresslevel=6)
     with transaction() as conn:
         conn.execute(
             """INSERT INTO runs (id, kind, strategy_id, strategy_hash, strategy_name, document,
-                                 params, data, metrics, result, job_id, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 params, data, metrics, result, job_id, created_at, family)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 run_id, kind, strategy_id, payload["strategy_hash"],
                 document.get("name", ""), to_json(document, sort_keys=True),
                 to_json(params, sort_keys=True),
                 to_json(payload.get("data", {}), sort_keys=True),
                 to_json(payload.get("metrics", {})),
-                blob, job_id, datetime.now(IST).isoformat(timespec="seconds"),
+                blob, job_id, datetime.now(IST).isoformat(timespec="seconds"), family,
             ],
         )
     return run_id
@@ -70,6 +73,7 @@ def _summary(row) -> dict[str, Any]:
         "kind": row["kind"],
         "strategy_id": row["strategy_id"],
         "strategy_hash": row["strategy_hash"],
+        "family": row["family"],
         "strategy_name": row["strategy_name"],
         "params": json.loads(row["params"]),
         "data": data,
@@ -91,9 +95,13 @@ def get(run_id: str, include_result: bool = True) -> dict[str, Any]:
 
 
 def list_runs(
-    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50
+    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50,
+    family: str | None = None,
 ) -> list[dict[str, Any]]:
     clauses, params = [], []
+    if family:
+        clauses.append("family = ?")
+        params.append(family)
     if strategy_id:
         clauses.append("strategy_id = ?")
         params.append(strategy_id)
@@ -102,7 +110,7 @@ def list_runs(
         params.append(strategy_hash)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = connection().execute(
-        f"""SELECT id, kind, strategy_id, strategy_hash, strategy_name, params, data,
+        f"""SELECT id, kind, strategy_id, strategy_hash, family, strategy_name, params, data,
                    metrics, job_id, created_at
             FROM runs {where} ORDER BY created_at DESC, rowid DESC LIMIT ?""",
         [*params, max(1, min(limit, 500))],
@@ -115,3 +123,29 @@ def trial_count(strategy_hash: str) -> int:
     return connection().execute(
         "SELECT count(*) FROM runs WHERE strategy_hash = ?", [strategy_hash]
     ).fetchone()[0]
+
+
+def family_trials(family: str) -> dict[str, int]:
+    """Trials in a family: every backtest, and how many distinct variants they covered.
+
+    `runs` is what a multiple-testing correction needs as the number of trials;
+    `variants` (distinct strategy hashes) says how much of that was retuning
+    rather than re-running the same thing.
+    """
+    row = connection().execute(
+        "SELECT count(*), count(DISTINCT strategy_hash) FROM runs WHERE family = ?", [family]
+    ).fetchone()
+    return {"runs": row[0], "variants": row[1]}
+
+
+def families(limit: int = 50) -> list[dict[str, Any]]:
+    """Families by recent activity, with their trial counts and best Sharpe so far."""
+    rows = connection().execute(
+        """SELECT family, count(*) AS runs, count(DISTINCT strategy_hash) AS variants,
+                  max(created_at) AS last_run, min(created_at) AS first_run,
+                  max(json_extract(metrics, '$.sharpe')) AS best_sharpe
+           FROM runs WHERE family IS NOT NULL
+           GROUP BY family ORDER BY last_run DESC LIMIT ?""",
+        [max(1, min(limit, 500))],
+    ).fetchall()
+    return [dict(r) for r in rows]

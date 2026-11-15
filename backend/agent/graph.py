@@ -460,6 +460,8 @@ def _run_summary(report: dict[str, Any]) -> dict[str, Any]:
         "data": report.get("data") or {},
         "trades": len(trades),
         "trials": report.get("trials"),
+        "family": report.get("family"),
+        "family_trials": report.get("family_trials"),
     }
 
 

@@ -136,6 +136,7 @@ describe("Assistant", () => {
     const run = {
       run_id: "run_1", strategy_hash: "h", symbol: "SIM|NIFTY", timeframe: "15m", synthetic_data: true,
       metrics, warnings: ["Only 9 trades"], blocked_reasons: {}, trades: 9, trials: 2,
+      family: "fam_1", family_trials: { runs: 7, variants: 4 },
       data: { instrument_key: "SIM|NIFTY", timeframe: "15m", source: "simulated", derived_from: null,
               synthetic: true, first_bar: "2025-01-01T09:15:00+05:30", last_bar: "2025-06-30T15:15:00+05:30",
               bars: 3000, fingerprint: "abcdef1234567890", missing_sessions: 0, fetched_sessions: 0, notes: [] },
@@ -157,6 +158,7 @@ describe("Assistant", () => {
     await screen.findByText("synthetic data");
     expect(screen.getByText("12,345")).toBeTruthy();
     expect(screen.getByText(/backtest #2 of this exact strategy/)).toBeTruthy();
+    expect(screen.getByText(/7 backtests across 4 variants of this idea/)).toBeTruthy();
     expect(screen.getByText("Only 9 trades")).toBeTruthy();
     expect(screen.getByLabelText("Ask for a change")).toBeTruthy();
 

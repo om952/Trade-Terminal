@@ -525,9 +525,16 @@ def strategies_archive(strategy_id: str) -> dict:
 
 @app.get("/api/runs")
 def runs_list(
-    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50
+    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50,
+    family: str | None = None,
 ) -> dict:
-    return {"runs": run_history.list_runs(strategy_id, strategy_hash, limit)}
+    return {"runs": run_history.list_runs(strategy_id, strategy_hash, limit, family)}
+
+
+@app.get("/api/families")
+def families_list(limit: int = 50) -> dict:
+    """Strategy families and how many backtests each has had (P2.8)."""
+    return {"families": run_history.families(limit)}
 
 
 @app.get("/api/runs/{run_id}")

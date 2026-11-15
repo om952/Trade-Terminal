@@ -134,6 +134,8 @@ export interface BacktestResult {
   data?: DataInfo;
   run_id?: string;
   trials?: number;
+  family?: string;
+  family_trials?: { runs: number; variants: number };
   warnings: string[];
   metrics: Metrics;
   split: {
@@ -313,6 +315,8 @@ export interface RunSummary {
   data: DataInfo;
   trades: number;
   trials: number;
+  family?: string;
+  family_trials?: { runs: number; variants: number };
 }
 
 export interface DataInfo {
