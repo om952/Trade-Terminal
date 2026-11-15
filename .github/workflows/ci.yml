@@ -97,6 +97,26 @@ jobs:
       - name: Happy path
         run: npx playwright test
         working-directory: frontend
+      # The same test against the packaged app: build the wheel, install it
+      # outside the checkout, and let it serve its own UI.
+      - name: Build and install the wheel
+        run: |
+          (cd frontend && npm run build)
+          uv build --wheel --out-dir /tmp/wheel
+          uv venv --python 3.14 /tmp/inst
+          uv pip install --python /tmp/inst/bin/python /tmp/wheel/*.whl
+      - name: Happy path on the installed build
+        working-directory: frontend
+        env:
+          TRADE_TERMINAL_HOME: /tmp/tt-home
+          LLM_PROVIDER: scripted
+          LLM_SCRIPT: ${{ github.workspace }}/frontend/e2e/script.json
+          E2E_BASE_URL: http://127.0.0.1:8771
+        run: |
+          (cd / && /tmp/inst/bin/trade-terminal doctor)
+          (cd / && /tmp/inst/bin/trade-terminal serve --port 8771 --no-browser &)
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8771/api/health && break; sleep 0.5; done
+          npx playwright test
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

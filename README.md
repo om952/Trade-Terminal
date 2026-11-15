@@ -177,6 +177,30 @@ data/
   terminal.duckdb     instruments, coverage, metadata (gitignored)
 ```
 
+## Installing (without a checkout)
+
+Build a wheel once, then install it anywhere with `pipx` or `uv tool`:
+
+```bash
+(cd frontend && npm ci && npm run build) && uv build --wheel
+uv tool install dist/trade_terminal-*.whl      # or: pipx install dist/trade_terminal-*.whl
+trade-terminal                                 # starts the app and opens the browser
+```
+
+The wheel carries the built UI, so there is one process and one port. An
+installed copy keeps its settings (`.env`), data, logs and backups in a
+per-user folder; `trade-terminal where` prints it, and `TRADE_TERMINAL_HOME`
+moves it. Other commands:
+
+| Command | What it does |
+|---|---|
+| `trade-terminal doctor` | Checks the installation and says what to fix |
+| `trade-terminal backup` / `restore FILE` | Strategies, runs, conversations and journals (not market data). A backup is also taken daily at startup; the last 14 are kept |
+| `trade-terminal diagnostics` | A bundle that is safe to share: versions, health checks, redacted log tail; no strategies, trades or credentials |
+| `trade-terminal sync-instruments` | Refreshes the instrument master |
+
+The server binds to 127.0.0.1 only.
+
 ## Running the app
 
 Two processes. Backend first:

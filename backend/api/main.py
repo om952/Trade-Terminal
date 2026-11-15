@@ -92,6 +92,10 @@ async def lifespan(_: FastAPI):
         target=_report_interrupted_sessions, name="interrupted-sessions", daemon=True
     ).start()
     job_runner.start()
+    # Daily backup of strategies, runs and journals, off the startup path.
+    from backend.ops import backup
+
+    threading.Thread(target=backup.create_if_due, name="backup", daemon=True).start()
 
     yield
 
@@ -190,6 +194,14 @@ def _resolve_or_400(symbol: str) -> str:
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/doctor")
+def doctor_report() -> dict:
+    """Installation health: the same checks as `trade-terminal doctor`."""
+    from backend.ops import doctor
+
+    return doctor.report()
 
 
 @app.get("/api/status")
@@ -834,3 +846,28 @@ def live_snapshot(session_id: str, include_bars: bool = True) -> dict:
         ],
         "errors": state.errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# The UI
+# ---------------------------------------------------------------------------
+# Mounted last, so every /api route above wins. An installed copy carries the
+# built UI inside the package; a checkout serves frontend/dist if it was built.
+# With the UI on the API's own origin there is no CORS involved at all.
+
+def mount_ui(application: FastAPI, directory) -> bool:
+    from fastapi.staticfiles import StaticFiles
+
+    if directory is None:
+        return False
+    application.mount("/", StaticFiles(directory=directory, html=True), name="ui")
+    return True
+
+
+def _mount_bundled_ui() -> None:
+    from backend.ops.doctor import ui_dir
+
+    mount_ui(app, ui_dir())
+
+
+_mount_bundled_ui()

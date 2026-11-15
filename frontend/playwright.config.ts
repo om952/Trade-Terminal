@@ -15,12 +15,16 @@ const dataDir = process.env.E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "tt-e2e-"
 process.env.E2E_DATA_DIR = dataDir;   // shared with the worker processes
 const root = resolve(here, "..");
 
+// E2E_BASE_URL points the same test at an already running app, such as an
+// installed build serving its own UI; no servers are started then.
+const external = process.env.E2E_BASE_URL;
+
 export default defineConfig({
   testDir: "e2e",
   timeout: 120_000,
   retries: 0,
-  use: { baseURL: `http://127.0.0.1:${UI_PORT}`, trace: "retain-on-failure" },
-  webServer: [
+  use: { baseURL: external ?? `http://127.0.0.1:${UI_PORT}`, trace: "retain-on-failure" },
+  webServer: external ? undefined : [
     {
       command: `"${root}/.venv/bin/uvicorn" backend.api.main:app --host 127.0.0.1 --port ${API_PORT}`,
       cwd: root,

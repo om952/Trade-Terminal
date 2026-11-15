@@ -43,6 +43,9 @@ log = logging.getLogger(__name__)
 
 CANDLE_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "oi"]
 
+# Bump when the tables below change shape, and add the migration alongside.
+STORE_SCHEMA_VERSION = 1
+
 _db: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
 
@@ -123,8 +126,31 @@ def get_db() -> duckdb.DuckDBPyConnection:
             _db.execute("SET TimeZone='Asia/Kolkata'")
             for stmt in filter(None, (s.strip() for s in SCHEMA.split(";"))):
                 _db.execute(stmt)
+            try:
+                _check_store_version(_db)
+            except RuntimeError:
+                _db = None          # closed by the check; do not hand it out later
+                raise
             log.debug("DuckDB opened at %s", settings.db_path)
         return _db
+
+
+def _check_store_version(db: duckdb.DuckDBPyConnection) -> None:
+    """Stamp a new store; refuse one written by a newer build."""
+    row = db.execute("SELECT value FROM meta WHERE key = 'store_schema_version'").fetchone()
+    if row is None:
+        db.execute(
+            "INSERT INTO meta VALUES ('store_schema_version', ?)", [str(STORE_SCHEMA_VERSION)]
+        )
+        return
+    found = int(row[0])
+    if found > STORE_SCHEMA_VERSION:
+        db.close()
+        raise RuntimeError(
+            f"{settings.db_path} is at store version {found}, newer than this build "
+            f"understands ({STORE_SCHEMA_VERSION}). Upgrade the app rather than running an "
+            f"older version against newer data."
+        )
 
 
 def close_db() -> None:
