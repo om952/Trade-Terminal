@@ -686,6 +686,47 @@ def llm_delete_key(provider: Literal["anthropic"] = "anthropic") -> dict:
     return factory.status()
 
 
+# ---------------------------------------------------------------------------
+# Broker and alert credentials (values are write-only)
+# ---------------------------------------------------------------------------
+
+class CredentialRequest(BaseModel):
+    value: str = Field(min_length=8, max_length=5000)
+
+
+@app.get("/api/credentials")
+def credentials_status() -> dict:
+    from backend.core import credentials
+
+    return {"credentials": credentials.status(), "conflicts": credentials.conflicts()}
+
+
+@app.put("/api/credentials/{name}")
+def credentials_set(name: str, req: CredentialRequest) -> dict:
+    """Store in the OS keychain. The value is never returned or logged."""
+    from backend.core import credentials
+
+    if name not in credentials.SPECS or name == "upstox_session":
+        raise HTTPException(404, f"Unknown credential {name!r}")
+    try:
+        credentials.set(name, req.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except credentials.SecretStoreUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return credentials_status()
+
+
+@app.delete("/api/credentials/{name}")
+def credentials_delete(name: str) -> dict:
+    from backend.core import credentials
+
+    if name not in credentials.SPECS:
+        raise HTTPException(404, f"Unknown credential {name!r}")
+    credentials.delete(name)
+    return credentials_status()
+
+
 @app.get("/api/costs/preview")
 def cost_preview(
     segment: Literal[

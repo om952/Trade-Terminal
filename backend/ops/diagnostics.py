@@ -22,7 +22,6 @@ from backend.core.logsetup import redact
 from backend.ops import doctor
 
 LOG_TAIL_LINES = 2000
-SECRET_FIELDS = ("upstox_api_secret", "upstox_access_token", "kite_api_secret", "telegram_bot_token")
 
 
 def settings_summary() -> dict[str, Any]:
@@ -31,8 +30,10 @@ def settings_summary() -> dict[str, Any]:
              "llm_max_tokens_per_compile", "llm_max_seconds")
     out: dict[str, Any] = {name: str(getattr(settings, name)) for name in plain}
     out["mode"] = settings.mode.value
-    for name in SECRET_FIELDS:
-        out[name] = "set" if getattr(settings, name).get_secret_value() else "not set"
+    from backend.core import credentials
+
+    for item in credentials.status():
+        out[str(item["name"])] = f"set ({item['source']})" if item["source"] else "not set"
     for name in ("upstox_api_key", "kite_api_key", "telegram_chat_id", "api_allowed_hosts",
                  "api_allowed_origins"):
         out[name] = "set" if getattr(settings, name) else "not set"

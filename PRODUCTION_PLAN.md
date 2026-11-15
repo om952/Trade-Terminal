@@ -12,7 +12,7 @@ Item IDs (P0.1, P1.2, ...) are stable, so you can say "start P0" or "drop P3.4".
 |---|---|---|
 | **0** Stabilise the base | **Done 2026-11-14** on branch `phase-0-stabilise`, pending merge and first CI run on GitHub | P0.1 to P0.8 implemented, 404 tests. See below for what is left open. |
 | **1** Vertical slice | **Built 2026-11-14** on branch `phase-1-slice` (stacked on phase 0). M1 gate partly verified, see below | P1.1 to P1.6 implemented: 492 backend tests, 6 component tests, 1 end-to-end test |
-| **2** Measure and harden | **In progress** on branch `phase-2-harden` | Done: P2.1 (eval set and harness), P2.4 (packaging), P2.7 (doctor, backups, diagnostics). Open: P2.2, P2.3, P2.5, P2.6, P2.8, P2.9 |
+| **2** Measure and harden | **In progress** on branch `phase-2-harden` | Done: P2.1 (eval set and harness), P2.4 (packaging), P2.5 (credentials in the keychain, security checklist), P2.7 (doctor, backups, diagnostics), P2.8 (trial counts per family). Open: P2.2, P2.3, P2.6, P2.9 |
 | 3 to 5 | Not started | |
 
 Phase 2 so far (2026-11-16): 618 backend tests; the Playwright happy path also runs against the installed wheel.

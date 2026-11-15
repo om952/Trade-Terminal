@@ -30,7 +30,9 @@ from urllib.parse import urlencode
 
 import httpx
 
+from backend.core import credentials
 from backend.core.config import IST, settings
+from backend.core.logsetup import register_secret
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ def exchange_code(code: str) -> dict:
     payload = {
         "code": code,
         "client_id": settings.upstox_api_key,
-        "client_secret": settings.upstox_api_secret.get_secret_value(),
+        "client_secret": credentials.get("upstox_api_secret"),
         "redirect_uri": settings.upstox_redirect_uri,
         "grant_type": "authorization_code",
     }
@@ -131,10 +133,50 @@ def _save_token(data: dict) -> None:
         "issued_at": datetime.now(IST).isoformat(),
         "expires_at": _next_expiry().isoformat(),
     }
-    settings.token_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.token_path.write_text(json.dumps(record, indent=2))
-    settings.token_path.chmod(0o600)  # bearer credential; keep it owner-only
-    log.info("Token cached, expires %s", record["expires_at"])
+    register_secret(record["access_token"])
+    try:
+        credentials.set("upstox_session", json.dumps(record))
+        settings.token_path.unlink(missing_ok=True)
+        where = "keychain"
+    except credentials.SecretStoreUnavailable:
+        # No keychain on this machine: keep the old owner-only file.
+        _write_cache_file(record)
+        where = str(settings.token_path)
+    log.info("Token stored in %s, expires %s", where, record["expires_at"])
+
+
+def _write_cache_file(record: dict) -> None:
+    path = settings.token_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".tmp")
+    partial.write_text(json.dumps(record, indent=2))
+    partial.chmod(0o600)          # bearer credential; owner-only before it has a name
+    partial.replace(path)
+
+
+def _session() -> dict | None:
+    """The browser-login session: keychain first, then the legacy cache file.
+
+    A cache file left by an older version is moved into the keychain the first
+    time it is read, and deleted once the keychain holds it.
+    """
+    stored = credentials.get("upstox_session")
+    if stored:
+        record = json.loads(stored)
+    elif settings.token_path.exists():
+        record = json.loads(settings.token_path.read_text())
+        try:
+            credentials.set("upstox_session", json.dumps(record))
+            if credentials.get("upstox_session"):
+                settings.token_path.unlink(missing_ok=True)
+                log.info("Moved the Upstox session from %s into the keychain", settings.token_path.name)
+        except credentials.SecretStoreUnavailable:
+            pass
+    else:
+        return None
+    if record.get("access_token"):
+        register_secret(record["access_token"])
+    return record
 
 
 def _jwt_expiry(token: str) -> datetime | None:
@@ -161,41 +203,44 @@ def load_token() -> str | None:
     if not status.valid:
         return None
 
-    env_token = settings.upstox_access_token.get_secret_value().strip()
-    if env_token:
-        return env_token
-    return json.loads(settings.token_path.read_text())["access_token"]
+    pasted = credentials.get("upstox_access_token")
+    if pasted:
+        return pasted
+    record = _session()
+    return record["access_token"] if record else None
 
 
 def token_status() -> TokenStatus:
     """Inspect the active token without raising. Use this for health checks.
 
-    A token pasted into .env wins over the cached file — it is the more explicit
-    action, so silently preferring a stale cached token would be surprising.
+    A pasted token (keychain or .env) wins over the browser-login session: it
+    is the more explicit action, so silently preferring a stale session would
+    be surprising.
     """
-    env_token = settings.upstox_access_token.get_secret_value().strip()
-    if env_token:
-        expires_at = _jwt_expiry(env_token)
+    pasted = credentials.get("upstox_access_token")
+    if pasted:
+        where = credentials.source("upstox_access_token")
+        expires_at = _jwt_expiry(pasted)
         if expires_at is None:
-            # Unparseable JWT: fall back to the daily 09:00 IST rule rather than
+            # Unparseable JWT: fall back to the daily 03:30 IST rule rather than
             # refusing to try. The API is the real authority on validity.
-            return TokenStatus(True, _next_expiry(), "using UPSTOX_ACCESS_TOKEN from .env (expiry unknown)")
+            return TokenStatus(True, _next_expiry(), f"using the pasted token from {where} (expiry unknown)")
         if datetime.now(IST) >= expires_at:
             return TokenStatus(
                 False, expires_at,
-                "UPSTOX_ACCESS_TOKEN in .env has expired — paste a fresh one or "
-                "run: python -m backend.data.upstox_auth",
+                f"the pasted Upstox token in {where} has expired: paste a fresh one "
+                "(trade-terminal credentials set upstox_access_token) or log in: "
+                "python -m backend.data.upstox_auth",
             )
-        return TokenStatus(True, expires_at, "using UPSTOX_ACCESS_TOKEN from .env")
-
-    if not settings.token_path.exists():
-        return TokenStatus(False, None, "no cached token — run: python -m backend.data.upstox_auth")
+        return TokenStatus(True, expires_at, f"using the pasted token from {where}")
 
     try:
-        record = json.loads(settings.token_path.read_text())
+        record = _session()
+        if record is None:
+            return TokenStatus(False, None, "not logged in: run python -m backend.data.upstox_auth")
         expires_at = datetime.fromisoformat(record["expires_at"])
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        return TokenStatus(False, None, f"token cache unreadable: {exc}")
+        return TokenStatus(False, None, f"stored Upstox session unreadable: {exc}")
 
     if datetime.now(IST) >= expires_at:
         return TokenStatus(False, expires_at, "token expired — re-authorize")

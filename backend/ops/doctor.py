@@ -142,6 +142,21 @@ def _broker() -> Check:
                                  f"synthetic data still work.")
 
 
+def _credentials() -> Check:
+    from backend.core import credentials
+
+    conflicts = credentials.conflicts()
+    if conflicts:
+        return Check("credentials", WARN, f"{', '.join(conflicts)} differ between the keychain and "
+                                          f".env (the keychain wins); remove one")
+    plain = [n for n in credentials.in_env_file() if credentials.source(n) == ".env"]
+    if plain:
+        return Check("credentials", WARN, f"{', '.join(plain)} in plaintext in .env; move them: "
+                                          f"trade-terminal credentials import --remove-from-env")
+    stored = [i["name"] for i in credentials.status() if i["source"] == "keychain"]
+    return Check("credentials", OK, f"{len(stored)} in the keychain, none in plaintext")
+
+
 def _llm() -> Check:
     from backend.llm import factory
 
@@ -207,7 +222,7 @@ def run() -> list[Check]:
         checks.extend(_market_store())
     except Exception as exc:
         checks.append(Check("market data store", FAIL, f"{type(exc).__name__}: {exc}"))
-    for fn in (_broker, _llm, _risk, _ui, _backups, _logs):
+    for fn in (_broker, _credentials, _llm, _risk, _ui, _backups, _logs):
         checks.append(_safe(fn))
     return checks
 

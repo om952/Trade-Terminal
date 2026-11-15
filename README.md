@@ -198,8 +198,24 @@ moves it. Other commands:
 | `trade-terminal backup` / `restore FILE` | Strategies, runs, conversations and journals (not market data). A backup is also taken daily at startup; the last 14 are kept |
 | `trade-terminal diagnostics` | A bundle that is safe to share: versions, health checks, redacted log tail; no strategies, trades or credentials |
 | `trade-terminal sync-instruments` | Refreshes the instrument master |
+| `trade-terminal credentials list` / `set NAME` / `import` | Broker and alert secrets in the OS keychain (see below) |
 
 The server binds to 127.0.0.1 only.
+
+### Credentials
+
+The Upstox API secret, a pasted Upstox token, the Telegram bot token and the
+Kite secret live in the OS keychain (macOS Keychain, Windows Credential
+Manager, Secret Service on Linux), as does the session from the Upstox browser
+login. `.env` still works as a fallback. To move what is there now:
+
+```bash
+trade-terminal credentials import --remove-from-env    # or: python -m backend.cli credentials ...
+trade-terminal credentials list                         # where each one lives; never the value
+```
+
+Each value is read back from the keychain before its `.env` line is removed.
+If both places hold different values the keychain wins, and `doctor` says so.
 
 ## Running the app
 

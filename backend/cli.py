@@ -7,6 +7,7 @@
     trade-terminal restore FILE    restore a backup (stop the app first)
     trade-terminal diagnostics     write a bundle that is safe to share
     trade-terminal sync-instruments  refresh the instrument master
+    trade-terminal credentials list|set|delete|import  broker and alert secrets
     trade-terminal where           show where data and settings live
 
 The server always binds to 127.0.0.1. There is no flag to expose it: the API
@@ -91,6 +92,58 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_credentials(args: argparse.Namespace) -> int:
+    import getpass
+
+    from backend.core import credentials
+
+    action = args.action
+    try:
+        if action == "list":
+            for item in credentials.status():
+                where = item["source"] or "not set"
+                print(f"{item['name']:<22} {where:<9} {item['label']}")
+            for name in credentials.conflicts():
+                print(f"\nWARNING: {name} differs between the keychain and .env; the keychain wins.")
+            plain = [n for n in credentials.in_env_file() if credentials.source(n) == ".env"]
+            if plain:
+                print("\nIn plaintext in .env: " + ", ".join(plain)
+                      + "\nMove them: trade-terminal credentials import --remove-from-env")
+            return 0
+        if action in ("set", "delete") and not args.name:
+            print(f"Name the credential: trade-terminal credentials {action} NAME "
+                  f"(one of: {', '.join(credentials.SPECS)})")
+            return 2
+        if action == "set":
+            value = getpass.getpass(f"{credentials.SPECS[args.name].label} (input hidden): ")
+            credentials.set(args.name, value)
+            print(f"Stored {args.name} in the keychain.")
+            return 0
+        if action == "delete":
+            gone = credentials.delete(args.name)
+            print(f"Deleted {args.name} from the keychain." if gone else f"{args.name} was not in the keychain.")
+            return 0
+        if action == "import":
+            result = credentials.import_from_env(remove_from_env=args.remove_from_env)
+            if not result["imported"] and not result["skipped"]:
+                print("No secrets in .env to import.")
+            if result["imported"]:
+                print("Imported into the keychain: " + ", ".join(result["imported"]))
+            for name in result["skipped"]:
+                print(f"Skipped {name}: the keychain already holds a different value. "
+                      f"Delete one of them first.")
+            if result["removed_from_env"]:
+                print("Removed from .env: " + ", ".join(result["removed_from_env"]))
+            elif result["imported"]:
+                print("They are still in .env as well. Delete those lines, or re-run with "
+                      "--remove-from-env.")
+            return 0
+    except (KeyError, ValueError, credentials.SecretStoreUnavailable) as exc:
+        print(f"Error: {exc.args[0] if exc.args else exc}")
+        return 1
+    return 2
+
+
 def cmd_where(args: argparse.Namespace) -> int:
     from backend.core.config import HOME, IS_CHECKOUT, settings
 
@@ -127,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     restore.set_defaults(func=cmd_restore)
     sub.add_parser("diagnostics", help="write a shareable diagnostics bundle").set_defaults(func=cmd_diagnostics)
     sub.add_parser("sync-instruments", help="refresh the instrument master").set_defaults(func=cmd_sync)
+    creds = sub.add_parser("credentials", help="broker and alert secrets in the OS keychain")
+    creds.add_argument("action", choices=["list", "set", "delete", "import"])
+    creds.add_argument("name", nargs="?", help="for set / delete")
+    creds.add_argument("--remove-from-env", action="store_true",
+                       help="with import: delete the imported lines from .env afterwards")
+    creds.set_defaults(func=cmd_credentials)
     sub.add_parser("where", help="show where data and settings live").set_defaults(func=cmd_where)
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)
 

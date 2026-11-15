@@ -196,7 +196,7 @@ def test_diagnostics_bundle_holds_no_secrets_or_user_work(home, monkeypatch):
     assert names == {"doctor.json", "packages.json", "settings.json", "jobs.json", "log-tail.txt"}
     assert token not in everything and "upstox-super-secret-value" not in everything
     assert "send failed" in everything, "the log tail should be there, redacted"
-    assert summary["telegram_bot_token"] == "set" and summary["upstox_api_secret"] == "set"
+    assert summary["telegram_bot_token"] == "set (.env)" and summary["upstox_api_secret"] == "set (.env)"
     assert strategy_id not in everything and "EMA Crossover" not in everything
     assert bundle.stat().st_mode & 0o777 == 0o600
 

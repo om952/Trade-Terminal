@@ -145,10 +145,13 @@ class Settings(BaseSettings):
 
     def require_upstox(self) -> None:
         """Fail loudly and early rather than at the first API call."""
-        if not self.upstox_api_key or not self.upstox_api_secret.get_secret_value():
+        from backend.core import credentials
+
+        if not self.upstox_api_key or not credentials.get("upstox_api_secret"):
             raise RuntimeError(
-                "UPSTOX_API_KEY / UPSTOX_API_SECRET missing from .env. "
-                "Create an app at https://account.upstox.com/developer/apps"
+                "UPSTOX_API_KEY (in .env) or the Upstox API secret is missing. Store the "
+                "secret with: trade-terminal credentials set upstox_api_secret. Create an app "
+                "at https://account.upstox.com/developer/apps"
             )
 
     def ensure_dirs(self) -> None:
