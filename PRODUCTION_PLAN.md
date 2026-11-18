@@ -10,15 +10,17 @@ Item IDs (P0.1, P1.2, ...) are stable, so you can say "start P0" or "drop P3.4".
 
 | Phase | State | Notes |
 |---|---|---|
-| **0** Stabilise the base | **Done 2026-11-14** on branch `phase-0-stabilise`, pending merge and first CI run on GitHub | P0.1 to P0.8 implemented, 404 tests. See below for what is left open. |
-| **1** Vertical slice | **Built 2026-11-14** on branch `phase-1-slice` (stacked on phase 0). M1 gate partly verified, see below | P1.1 to P1.6 implemented: 492 backend tests, 6 component tests, 1 end-to-end test |
-| **2** Measure and harden | **In progress** on branch `phase-2-harden` | Done: P2.1 (eval set and harness), P2.4 (packaging), P2.5 (credentials in the keychain, security checklist), P2.7 (doctor, backups, diagnostics), P2.8 (trial counts per family). Open: P2.2, P2.3, P2.6, P2.9 |
+| **0** Stabilise the base | **Done**, merged to main 2026-11-18 (PR #2) | P0.1 to P0.8. See below for what is left open. |
+| **1** Vertical slice | **Done**, merged 2026-11-18 (PR #3). M1 gate partly verified, see below | P1.1 to P1.6 |
+| **2** Measure and harden | **In progress**. P2.1, P2.4, P2.5, P2.7, P2.8 merged 2026-11-18 (PR #4); P2.2 part 1 on `phase-2-schema-v2` | Open: rest of P2.2, P2.3, P2.6, P2.9 |
 | 3 to 5 | Not started | |
 
-Phase 2 so far (2026-11-16): 618 backend tests; the Playwright happy path also runs against the installed wheel.
+Phase 2 so far (2026-11-18): 743 backend tests, 6 component tests; the Playwright happy path also runs against the installed wheel.
 
 - **P2.1** has the set (50 cases, 16 holdout) and the harness, but **no model has been run against it**: there is no Anthropic key on this machine yet. The gold specs were written by the assistant and need a trader's review before any number from them is quoted.
-- **P2.3** (real option premiums) and the M1 broker checks wait on a fresh Upstox token; **P2.2** (schema v2) waits on the "not point to point" answer and a VIX series; **P2.6** on the data-terms answer.
+- **P2.2 part 1 (done):** schema version 2, a strict superset of v1. A document records the lowest version that expresses it, so every v1 document keeps its hash, id and family (golden test over all templates). Added expression operands (rolling `rank` and `quantile` over the previous N bars; `add`, `sub`, `mul`, `div`), with vectorized and streaming agreeing to 1e-9 and a paper-equals-backtest gate test; paper warm-up extends by the longest window. Added `sweep` (range parameters): `POST /api/jobs/sweep` runs every variant as a recorded backtest, so the grid counts toward the family's trials; invalid variants are skipped with a reason, and no "best" row is named. No v1-to-v2 migration step is needed because v1 documents are valid v2 documents.
+- **P2.2 part 2 (open):** regime-conditional parameters and VIX- or IV-scaled thresholds wait on the "not point to point" answer and an India VIX series; risk-based sizing needs a design for option legs, whose premium is unknown when the entry signal fires. The UI and the chat builder do not yet run sweeps (the API does).
+- **P2.3** (real option premiums) and the M1 broker checks wait on a fresh Upstox token; **P2.6** on the data-terms answer.
 - Found while writing the eval's gold specs, and fixed: `max_trades_per_day` and the re-entry cap counted legs instead of entries (multi-leg results change); the builder told the model to write stock keys that do not exist.
 
 Phase 1, what exists: read-through bar cache (1-minute and daily bases, derived timeframes, session ledger, fingerprints); SQLite app state with versioned strategies, run history and a job runner with progress and cancel; an LLM layer (Claude via the official SDK, keychain keys, per-turn caps); the LangGraph builder (at most 2 questions, at most 3 repairs, approval before any backtest, code-rendered read-back, JSON-patch refinements, number-checked explanations, SQLite checkpoints); the Assistant and Library UI with one-click paper trading.

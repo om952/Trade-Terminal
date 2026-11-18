@@ -254,6 +254,15 @@ missing (1-minute bars for intraday timeframes, daily bars otherwise) and
 derive 3m, 5m, 15m and 1h locally. `python -m backend.data.ingest parity NIFTY`
 checks derived bars against Upstox's native ones.
 
+Thresholds need not be fixed numbers. A condition operand can be an
+expression: `{"fn": "rank", "of": "rsi", "window": 100}` (where RSI sits among
+its previous 100 values, 0 to 100), `{"fn": "quantile", "of": "high",
+"window": 50, "q": 0.9}`, or `add`/`sub`/`mul`/`div` over two operands. A
+`sweep` lists numbers to vary (`{"path": "/indicators/0/params/period",
+"values": [5, 9, 13]}`); `POST /api/jobs/sweep` runs every combination (at most
+200) as a recorded backtest, and each one counts as a trial of the strategy's
+family.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash

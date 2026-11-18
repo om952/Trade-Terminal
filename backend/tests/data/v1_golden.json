@@ -1,0 +1,1147 @@
+{
+ "bear_put_spread": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Buy ATM put, sell OTM put. Defined risk on a downtrend.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_below",
+      "left": "ema_fast",
+      "right": "ema_slow"
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": null,
+   "id": "stg_4c10f9def8",
+   "indicators": [
+    {
+     "id": "ema_fast",
+     "params": {
+      "period": 9
+     },
+     "type": "EMA"
+    },
+    {
+     "id": "ema_slow",
+     "params": {
+      "period": 21
+     },
+     "type": "EMA"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "long_put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "SELL",
+     "id": "short_put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "OTM-2"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "Bear Put Spread",
+   "risk": {
+    "max_concurrent_positions": 2,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 2,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "15m"
+  },
+  "family": "fam_c65edacf02408b7b",
+  "hash": "4c10f9def8314c9500165dac199274576b731ec94af8716cadefddad886f1a7c"
+ },
+ "bollinger_breakout": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Long on a close above the upper band, exit back at the middle band.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "close",
+      "right": "bb.upper"
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "crosses_below",
+      "left": "close",
+      "right": "bb.middle"
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_2f6640ab0b",
+   "indicators": [
+    {
+     "id": "bb",
+     "params": {
+      "period": 20,
+      "std_dev": 2.0
+     },
+     "type": "BOLLINGER"
+    },
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 1.5
+     },
+     "target": null,
+     "trail": {
+      "activate_at": 0.6,
+      "ref": null,
+      "type": "percent",
+      "value": 0.4
+     }
+    }
+   ],
+   "name": "Bollinger Breakout",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 4,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_ae8fdda3088683ec",
+  "hash": "2f6640ab0bb318e1049b9103ea1dbb5a9b68197d73d5a3c463444fe8ecb35bf7"
+ },
+ "bull_call_spread": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Buy ATM call, sell OTM call. Defined risk, capped reward, on trend.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "ema_fast",
+      "right": "ema_slow"
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": null,
+   "id": "stg_0a0b90cf0a",
+   "indicators": [
+    {
+     "id": "ema_fast",
+     "params": {
+      "period": 9
+     },
+     "type": "EMA"
+    },
+    {
+     "id": "ema_slow",
+     "params": {
+      "period": 21
+     },
+     "type": "EMA"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "long_call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "SELL",
+     "id": "short_call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "OTM+2"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "Bull Call Spread",
+   "risk": {
+    "max_concurrent_positions": 2,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 2,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "15m"
+  },
+  "family": "fam_775df6c5de927444",
+  "hash": "0a0b90cf0a1449a296b32f0c20e73ac11e0bbabcd8548890ddbffa63da237196"
+ },
+ "covered_call": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Hold the underlying, sell an OTM call against it for yield.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": ">",
+      "left": "rsi",
+      "right": 55
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "<",
+      "left": "rsi",
+      "right": 40
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_9e2f52d10e",
+   "indicators": [
+    {
+     "id": "rsi",
+     "params": {
+      "period": 14
+     },
+     "type": "RSI"
+    }
+   ],
+   "instrument": {
+    "segment": "equity",
+    "symbol": "NSE_EQ|INE002A01018"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "stock",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "SELL",
+     "id": "short_call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_monthly",
+      "right": "CE",
+      "strike_rule": "OTM+3"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "Covered Call",
+   "risk": {
+    "max_concurrent_positions": 2,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 1,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:20:00",
+    "square_off": null,
+    "start": "09:20:00"
+   },
+   "timeframe": "1d"
+  },
+  "family": "fam_072ab5021f0a3074",
+  "hash": "9e2f52d10e522e9a924adf8f6c6dd0fdb20b703fe9bf7a1af1d23ae9354f524f"
+ },
+ "cpr_breakout": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Long on a close above the previous day's TC, with volume confirmation.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "close",
+      "right": "tc"
+     },
+     {
+      "cmp": ">",
+      "left": "volume",
+      "right": "vol_avg"
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "crosses_below",
+      "left": "close",
+      "right": "pivot"
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_8f10e34a04",
+   "indicators": [
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    },
+    {
+     "id": "vol_avg",
+     "params": {
+      "period": 20
+     },
+     "type": "VOLUMESMA"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 1.5
+     },
+     "target": null,
+     "trail": {
+      "activate_at": 0.5,
+      "ref": null,
+      "type": "percent",
+      "value": 0.5
+     }
+    }
+   ],
+   "name": "CPR Breakout",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 2,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_35c8f45ee00bb373",
+  "hash": "8f10e34a0442201a39d343d1d77d6c421a626fd81ff528a848610b00c34c5784"
+ },
+ "ema_crossover": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Long when EMA(9) crosses above EMA(20), exit on the reverse cross.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "ema_fast",
+      "right": "ema_slow"
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "crosses_below",
+      "left": "ema_fast",
+      "right": "ema_slow"
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_c8e483def3",
+   "indicators": [
+    {
+     "id": "ema_fast",
+     "params": {
+      "period": 9
+     },
+     "type": "EMA"
+    },
+    {
+     "id": "ema_slow",
+     "params": {
+      "period": 20
+     },
+     "type": "EMA"
+    },
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 1.5
+     },
+     "target": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 3.0
+     },
+     "trail": null
+    }
+   ],
+   "name": "EMA Crossover",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 4,
+    "re_entry": {
+     "cooldown_bars": 2,
+     "enabled": true,
+     "max": 3
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_e29567a2c7398563",
+  "hash": "c8e483def3da58ad452d7e82789d1e371f1803e260170ea6255e64fdbc8701fc"
+ },
+ "iron_condor": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Sell an OTM strangle, buy wings for protection. Range-bound premium capture.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "<",
+      "left": "bb.bandwidth",
+      "right": 0.006
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": null,
+   "id": "stg_4a83e6b301",
+   "indicators": [
+    {
+     "id": "bb",
+     "params": {
+      "period": 20
+     },
+     "type": "BOLLINGER"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "SELL",
+     "id": "short_call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "OTM+2"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "BUY",
+     "id": "long_call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "OTM+4"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "SELL",
+     "id": "short_put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "OTM-2"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "BUY",
+     "id": "long_put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "OTM-4"
+     },
+     "stop_loss": null,
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "Iron Condor",
+   "risk": {
+    "max_concurrent_positions": 4,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 1,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:05:00",
+    "square_off": "15:10:00",
+    "start": "09:30:00"
+   },
+   "timeframe": "15m"
+  },
+  "family": "fam_e55018d782b1f6f1",
+  "hash": "4a83e6b3017af9f64ef644abdcf100bf3b769f18c8d45dd0a4f525e0bb9ecaa3"
+ },
+ "long_straddle": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Buy ATM call and put \u2014 a volatility expansion bet, not a directional one.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "<",
+      "left": "bb.bandwidth",
+      "right": 0.004
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": null,
+   "id": "stg_33ffac1ff9",
+   "indicators": [
+    {
+     "id": "bb",
+     "params": {
+      "period": 20
+     },
+     "type": "BOLLINGER"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": null,
+     "target": {
+      "ref": null,
+      "type": "percent",
+      "value": 40.0
+     },
+     "trail": null
+    },
+    {
+     "action": "BUY",
+     "id": "put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": null,
+     "target": {
+      "ref": null,
+      "type": "percent",
+      "value": 40.0
+     },
+     "trail": null
+    }
+   ],
+   "name": "Long Straddle",
+   "risk": {
+    "max_concurrent_positions": 2,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 1,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:05:00",
+    "square_off": "15:10:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_011fb3a09d37bba7",
+  "hash": "33ffac1ff9cc053d4ab00daca58daa916a908c8e0103ef3d325241da32289d8b"
+ },
+ "macd_crossover": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Long when the MACD line crosses above its signal line while above zero.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "macd.macd",
+      "right": "macd.signal"
+     },
+     {
+      "cmp": ">",
+      "left": "macd.macd",
+      "right": 0
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "crosses_below",
+      "left": "macd.macd",
+      "right": "macd.signal"
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_d8ab922579",
+   "indicators": [
+    {
+     "id": "macd",
+     "params": {
+      "fast": 12,
+      "signal": 9,
+      "slow": 26
+     },
+     "type": "MACD"
+    },
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 2.0
+     },
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "MACD Crossover",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 3,
+    "re_entry": {
+     "cooldown_bars": 3,
+     "enabled": true,
+     "max": 2
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "15m"
+  },
+  "family": "fam_08e9e8929a0cc812",
+  "hash": "d8ab9225799aae11c8aa01b534b1e04ec5cbe29a4fc59550b99a13a63f89873f"
+ },
+ "rsi_mean_reversion": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Buy oversold (RSI crosses back above 30), exit at RSI 60.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": "crosses_above",
+      "left": "rsi",
+      "right": 30
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": ">",
+      "left": "rsi",
+      "right": 60
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_c1ee2057c9",
+   "indicators": [
+    {
+     "id": "rsi",
+     "params": {
+      "period": 14
+     },
+     "type": "RSI"
+    },
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 2.0
+     },
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "RSI Mean Reversion",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 3,
+    "re_entry": {
+     "cooldown_bars": 4,
+     "enabled": true,
+     "max": 2
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "15m"
+  },
+  "family": "fam_30f246211d42113c",
+  "hash": "c1ee2057c9fffb251cf9da3e77fe6e7cc5b8ad0808635d60cde08a67e8911c2f"
+ },
+ "short_straddle": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Sell ATM call and put at 09:30, square off at 15:10. Premium decay play.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": ">",
+      "left": "close",
+      "right": 0
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": null,
+   "id": "stg_ea1fcdd507",
+   "indicators": [
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "SELL",
+     "id": "call",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "CE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": {
+      "ref": null,
+      "type": "percent",
+      "value": 30.0
+     },
+     "target": null,
+     "trail": null
+    },
+    {
+     "action": "SELL",
+     "id": "put",
+     "kind": "option",
+     "lots": 1,
+     "option": {
+      "expiry": "current_weekly",
+      "right": "PE",
+      "strike_rule": "ATM+0"
+     },
+     "stop_loss": {
+      "ref": null,
+      "type": "percent",
+      "value": 30.0
+     },
+     "target": null,
+     "trail": null
+    }
+   ],
+   "name": "Short Straddle",
+   "risk": {
+    "max_concurrent_positions": 2,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 1,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:05:00",
+    "square_off": "15:10:00",
+    "start": "09:30:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_a56b335537596430",
+  "hash": "ea1fcdd50753105a6587d3fdf775293fbf84ac01074a627b459d33e6e3a76490"
+ },
+ "volume_spike_breakout": {
+  "document": {
+   "costs": {
+    "brokerage_model": "upstox_fno",
+    "slippage_bps": 5.0
+   },
+   "description": "Long on a 20-bar high accompanied by at least twice average volume.",
+   "entry": {
+    "conditions": [
+     {
+      "cmp": ">=",
+      "left": "close",
+      "right": "dc.upper"
+     },
+     {
+      "cmp": ">",
+      "left": "vol_ratio",
+      "right": 2.0
+     }
+    ],
+    "op": "AND"
+   },
+   "exit": {
+    "conditions": [
+     {
+      "cmp": "<",
+      "left": "close",
+      "right": "dc.middle"
+     }
+    ],
+    "op": "OR"
+   },
+   "id": "stg_e8f3159c7b",
+   "indicators": [
+    {
+     "id": "dc",
+     "params": {
+      "period": 20
+     },
+     "type": "DONCHIAN"
+    },
+    {
+     "id": "vol_ratio",
+     "params": {
+      "period": 20
+     },
+     "type": "VOLUMERATIO"
+    },
+    {
+     "id": "atr",
+     "params": {
+      "period": 14
+     },
+     "type": "ATR"
+    }
+   ],
+   "instrument": {
+    "segment": "index",
+    "symbol": "NSE_INDEX|Nifty 50"
+   },
+   "legs": [
+    {
+     "action": "BUY",
+     "id": "leg1",
+     "kind": "equity",
+     "lots": 1,
+     "option": null,
+     "stop_loss": {
+      "ref": "atr",
+      "type": "atr_multiple",
+      "value": 2.0
+     },
+     "target": {
+      "ref": null,
+      "type": "percent",
+      "value": 1.5
+     },
+     "trail": null
+    }
+   ],
+   "name": "Volume Spike Breakout",
+   "risk": {
+    "max_concurrent_positions": 1,
+    "max_loss_per_day": null,
+    "max_profit_per_day": null,
+    "max_trades_per_day": 3,
+    "re_entry": {
+     "cooldown_bars": 0,
+     "enabled": false,
+     "max": 0
+    }
+   },
+   "schema_version": 1,
+   "session": {
+    "end": "15:10:00",
+    "square_off": "15:15:00",
+    "start": "09:20:00"
+   },
+   "timeframe": "5m"
+  },
+  "family": "fam_379961fcc121fa99",
+  "hash": "e8f3159c7b69f1fa2f3b94439f7c64b23d9cbdbae9c8cf71944b2f9dcee10991"
+ }
+}

@@ -7,6 +7,8 @@ while hunting for a good backtest:
 * numbers: indicator periods, thresholds, stop and target sizes, lots, limits;
 * times: the entry window and the square-off time;
 * strike offsets (ATM+1 versus ATM+2) and the expiry series;
+* an expression's window and quantile (rank of RSI over 50 or 100 bars);
+* the sweep itself: its variants are the trials this module counts;
 * the instrument and the timeframe;
 * names, ids and descriptions.
 
@@ -36,6 +38,8 @@ from backend.strategy.schema import (
     Condition,
     ConditionGroup,
     ExitRule,
+    Expr,
+    ExprFn,
     InlineIndicator,
     Leg,
     Strategy,
@@ -69,7 +73,19 @@ def _default_output(type_name: str) -> str:
     return outputs[0] if outputs else "value"
 
 
+_COMMUTATIVE = frozenset({ExprFn.ADD, ExprFn.MUL})
+
+
 def _operand(strategy: Strategy, value: Any) -> str:
+    if isinstance(value, Expr):
+        # The function and what it reads are the idea; windows and quantiles
+        # are tuning, like an indicator's period.
+        if value.is_rolling:
+            return f"{value.fn.value}({_operand(strategy, value.of)})"
+        args = [_operand(strategy, a) for a in value.args or ()]
+        if value.fn in _COMMUTATIVE:
+            args.sort()
+        return f"{value.fn.value}({','.join(args)})"
     if isinstance(value, InlineIndicator):
         params = dict(value.params)
         if "source" in registry.get(value.type).params:

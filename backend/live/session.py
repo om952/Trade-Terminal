@@ -253,9 +253,11 @@ class PaperSession:
         recovered = J.recover(self.journal.session_id, self.journal.path.parent)
         resuming = recovered.started and not recovered.ended
 
+        # A rolling expression (rank of RSI over 500 bars) needs its window on
+        # top of whatever its source needs, so it extends the priming history.
         warmup = self.feed.warmup(
             config.instrument_key,
-            config.warmup_bars,
+            config.warmup_bars + strategy.rolling_lookback(),
             through=recovered.last_bar_time if resuming else None,
         )
         frame = self.feed.warmup_frame
@@ -277,10 +279,11 @@ class PaperSession:
         if warmup and not self.indicators.ready:
             raise RuntimeError(
                 f"Indicators are still not warm after {len(warmup)} bars. "
-                f"The longest indicator period exceeds the history available, so "
-                f"the strategy would trade on values the backtest never produced. "
-                f"Fetch more history for {config.instrument_key} "
-                f"{strategy.timeframe}, or shorten the indicator periods."
+                f"The longest indicator period or expression window exceeds the "
+                f"history available, so the strategy would trade on values the "
+                f"backtest never produced. Fetch more history for "
+                f"{config.instrument_key} {strategy.timeframe}, or shorten the "
+                f"indicator periods or windows."
             )
 
         if resuming:

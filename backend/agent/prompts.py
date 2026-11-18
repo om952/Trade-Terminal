@@ -126,6 +126,13 @@ strategy_json is the document as a JSON string, which must validate against this
 Rules the schema cannot show:
 - Condition operands are numbers, indicator ids, "id.output" for multi-output indicators, price fields ({", ".join(sorted(PRICE_FIELDS))}), context fields ({", ".join(sorted(CONTEXT_FIELDS))}), or an inline indicator object such as {{"type": "SMA", "of": "volume", "period": 20}}.
 - "rising" and "falling" compare against the previous bar; give right as 0.
+- When a threshold is not a fixed number, use an expression operand instead of inventing one:
+  - {{"fn": "rank", "of": "rsi", "window": 100}} is where the current value sits among the previous 100 bars, 0 to 100, so "RSI in its top 20% of the last 100 bars" is that compared > 80.
+  - {{"fn": "quantile", "of": "high", "window": 50, "q": 0.9}} is the 90th percentile of the previous 50 values.
+  - {{"fn": "add"|"sub"|"mul"|"div", "args": [a, b]}} combines two operands, for example "below VWAP minus 1.5 ATR" is close < {{"fn": "sub", "args": ["vwap", {{"fn": "mul", "args": ["atr", 1.5]}}]}}.
+  - rank and quantile read a price field, a declared indicator or an inline indicator, never a context field.
+- sweep lists numbers to try across a grid of backtests, only when the trader asks to test a range ("try EMA 5 to 20 in steps of 5"). Each item is {{"path": JSON Pointer to a number written in the document, "values": [...]}}. The document still holds one concrete value at that path (use the first value). Never add a sweep the trader did not ask for.
+- Leave schema_version out; the platform sets it.
 - Indicator and leg ids are lowercase snake_case, unique within the document.
 - instrument.symbol names what the signals are read from. For an index use its alias or key: {aliases}. For a stock, give the plain NSE trading symbol (for example "RELIANCE" or "HDFCBANK") with segment "equity"; the platform resolves it to the exchange's instrument key. Synthetic test data uses keys like "SIM|NIFTY"; keep any key the trader gives verbatim.
 - Options are legs with kind "option" and an option block; signals are still read from instrument.symbol (the underlying). A leg of kind "equity" trades the underlying itself (BUY is long, SELL is short), including on an index.

@@ -412,6 +412,33 @@ def test_gate_paper_session_matches_backtest(frame, tmp_path, key):
     assert session.portfolio.fees_paid == expected.portfolio.fees_paid
 
 
+def test_gate_paper_matches_backtest_with_schema_v2_expressions(frame, tmp_path):
+    """Rolling ranks, quantiles and arithmetic thresholds through the full live path."""
+    d = _strategy().model_dump(mode="json", exclude={"id", "schema_version"})
+    d["indicators"].append({"id": "rsi", "type": "RSI", "params": {"period": 14}})
+    d["entry"]["conditions"].append(
+        {"left": {"fn": "rank", "of": "atr", "window": 50}, "cmp": ">", "right": 40}
+    )
+    d["exit"]["conditions"] += [
+        {"left": "close", "cmp": "crosses_below",
+         "right": {"fn": "sub", "args": ["ema_slow", {"fn": "mul", "args": ["atr", 0.5]}]}},
+        {"left": "rsi", "cmp": ">",
+         "right": {"fn": "quantile", "of": "rsi", "window": 100, "q": 0.95}},
+    ]
+    strategy = Strategy.model_validate(d)
+    assert strategy.schema_version == 2
+
+    expected = _backtest(strategy, frame)
+    session = _paper(strategy, frame, tmp_path, session_id="gate-v2")
+    session.run()
+
+    live_trades = session.portfolio.closed_trades
+    assert len(expected.trades) > 20
+    assert [(t.entry_time, t.exit_time, t.reason, t.direction) for t in live_trades] == \
+        [(t.entry_time, t.exit_time, t.reason, t.direction) for t in expected.trades]
+    assert abs(session.portfolio.realized_pnl - expected.portfolio.realized_pnl) < Decimal("0.01")
+
+
 def test_gate_daily_timeframe_paper_matches_backtest(daily_frame, tmp_path):
     """Daily bars have no intraday session, and the live path must agree there too."""
     strategy = _strategy("ema_crossover", timeframe="1d")
@@ -752,6 +779,30 @@ class TestSession:
         for got, want in zip(session.portfolio.closed_trades, after):
             assert got.entry_time == want.entry_time
             assert abs(got.net_pnl - want.net_pnl) < Decimal("0.01")
+
+    def test_warmup_extends_to_cover_a_long_expression_window(self, frame, tmp_path):
+        """A 450-bar quantile over RSI does not fit the default 400-bar priming;
+        the session must fetch the extra history rather than refuse or trade cold."""
+        d = _strategy().model_dump(mode="json", exclude={"id", "schema_version"})
+        d["indicators"].append({"id": "rsi", "type": "RSI", "params": {"period": 14}})
+        d["exit"]["conditions"].append({
+            "left": "rsi", "cmp": ">",
+            "right": {"fn": "quantile", "of": "rsi", "window": 450, "q": 0.9},
+        })
+        strategy = Strategy.model_validate(d)
+        assert strategy.rolling_lookback() == 450
+        expected = _backtest(strategy, frame)
+
+        split = 1200
+        session = _paper(strategy, frame.iloc[split:], tmp_path,
+                         warmup=frame.iloc[:split], session_id="long-window")
+        session.run()
+
+        cutoff = pd.Timestamp(frame["timestamp"].iloc[split]).tz_convert(IST)
+        after = [t for t in expected.trades if t.entry_time >= cutoff]
+        assert after
+        got = [(t.entry_time, t.exit_time, t.reason) for t in session.portfolio.closed_trades]
+        assert got == [(t.entry_time, t.exit_time, t.reason) for t in after]
 
 
 # ---------------------------------------------------------------------------
