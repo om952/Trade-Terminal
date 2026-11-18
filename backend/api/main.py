@@ -6,26 +6,35 @@ lives here, it can diverge from what a backtest or a live session does, and the
 one-engine guarantee is gone.
 
 Run:
-    .venv/bin/uvicorn backend.api.main:app --reload --port 8000
+    .venv/bin/uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
+
+Keep the host at 127.0.0.1. The API has no authentication; it relies on being
+reachable only from this machine (see backend/api/security.py).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.analytics import metrics as M
+from backend.api.security import DEV_ORIGINS, LocalOnlyMiddleware, parse_extra_hosts
 from backend.core.config import IST, settings
+from backend.core.logsetup import configure_logging
+from backend.core.version import __version__
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
-from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
+from backend.data.store import all_coverage, read_candles, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
 from backend.strategy import templates
@@ -34,17 +43,80 @@ from backend.strategy.schema import Strategy
 
 log = logging.getLogger(__name__)
 
+
+
+def _report_interrupted_sessions() -> None:
+    """Log sessions whose journal has no end record, i.e. the process died mid-run.
+
+    Reported, never resumed: restarting a session is the user's decision (the
+    Live tab lists these as "interrupted"). Runs off the startup path because
+    reading every journal can take seconds.
+    """
+    try:
+        from backend.live.manager import manager
+
+        interrupted = [s for s in manager.history() if s["state"] == "interrupted"]
+    except Exception:
+        log.exception("Could not check for interrupted sessions")
+        return
+
+    for s in interrupted:
+        log.warning(
+            "Interrupted session %s (%s on %s): %d bar(s), %d trade(s), open legs: %s. "
+            "Not resumed automatically; restart it from the Live tab if you want it back.",
+            s["session_id"], s["strategy"], s["symbol"], s["bars_seen"], s["trades"],
+            ", ".join(map(str, s["open_legs"])) or "none",
+        )
+    if not interrupted:
+        log.info("No interrupted sessions found")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    configure_logging()
+    log.info(
+        "Trade Terminal API %s starting (mode=%s, data dir %s)",
+        __version__, settings.mode.value, settings.data_dir,
+    )
+    threading.Thread(
+        target=_report_interrupted_sessions, name="interrupted-sessions", daemon=True
+    ).start()
+
+    yield
+
+    # Stop sessions before the process goes away, so each journal gets its end
+    # record instead of looking like a crash on the next start.
+    from backend.data.store import close_db
+    from backend.live.manager import manager
+
+    running = [s["session_id"] for s in manager.active() if s["running"]]
+    if running:
+        log.info("Shutdown: stopping %d running session(s): %s", len(running), ", ".join(running))
+    await run_in_threadpool(manager.stop_all, "shutdown")
+    close_db()
+    log.info("Trade Terminal API stopped")
+
+
 app = FastAPI(
     title="Trade Terminal",
     description="Visual strategy definition, backtesting, paper trading and live execution.",
-    version="0.5.0",
+    version=__version__,
+    lifespan=lifespan,
+)
+
+# Middleware runs outermost-last-added. CORS is added last so it wraps the
+# local-only check: a refused request still carries CORS headers, and the dev
+# UI sees a readable 403 rather than an opaque network error.
+app.add_middleware(
+    LocalOnlyMiddleware,
+    extra_hosts=parse_extra_hosts(settings.api_allowed_hosts),
 )
 
 # The Vite dev server runs on a different port; in production the frontend is
 # served as static files from this same origin and CORS becomes irrelevant.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=list(DEV_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -474,8 +546,8 @@ def _equity_payload(curve: list[tuple[datetime, Decimal]]) -> list[dict]:
 
 def _chart_payload(strategy: Strategy, df: pd.DataFrame, result) -> dict:
     """Candles, indicator overlays and trade markers for the chart tab."""
-    from backend.strategy.indicator_set import VectorizedIndicatorSet
     from backend.strategy import conditions as C
+    from backend.strategy.indicator_set import VectorizedIndicatorSet
 
     view = _downsample(df)
     first_time = _epoch(view["timestamp"].iloc[0])

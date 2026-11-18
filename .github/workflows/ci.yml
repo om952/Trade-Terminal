@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev --python 3.14
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+      - name: Tests left the repo's data folder untouched
+        run: |
+          if [ -n "$(find data -type f 2>/dev/null)" ]; then
+            echo "The test suite wrote into data/:"; find data -type f; exit 1
+          fi
+
+      - name: Dependency audit
+        run: |
+          uv export --frozen --all-extras --no-hashes --no-emit-project -o requirements.audit.txt
+          uv run --frozen pip-audit -r requirements.audit.txt --no-deps --disable-pip
+
+      # Informational until the existing type errors are cleared; see
+      # PRODUCTION_PLAN.md P0.5. Remove continue-on-error once it passes.
+      - name: Type check (informational)
+        continue-on-error: true
+        run: uv run --frozen mypy
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - name: Type check and build
+        run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=high

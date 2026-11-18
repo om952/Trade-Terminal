@@ -16,13 +16,13 @@ output columns, so the UI never hardcodes a list that can drift from reality.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import pandas as pd
 
 from backend.indicators import momentum, trend, volatility, volume
-from backend.indicators.base import PriceBar, StreamingIndicator, bars_from_frame
+from backend.indicators.base import StreamingIndicator, bars_from_frame
 
 Category = str
 

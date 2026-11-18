@@ -8,7 +8,7 @@ detected rather than ignored, and the simulator is reproducible.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -25,7 +25,6 @@ from backend.data.simulator import (
     weekly_expiries,
 )
 from backend.data.upstox_client import Timeframe
-
 
 # --------------------------------------------------------------------------
 # Timeframe parsing
@@ -274,8 +273,8 @@ def test_gap_detection_flags_thin_sessions():
 
 @pytest.fixture
 def temp_store(tmp_path, monkeypatch):
-    from backend.core.config import settings as s
     import backend.data.store as store
+    from backend.core.config import settings as s
 
     monkeypatch.setattr(s, "data_dir", tmp_path)
     store.close_db()
@@ -338,3 +337,57 @@ def test_store_date_range_filter(temp_store):
 
 def test_store_unknown_instrument_returns_empty(temp_store):
     assert temp_store.read_candles("NOPE|NOPE", "1d").empty
+
+
+def test_store_failed_write_leaves_previous_file_intact(temp_store, monkeypatch):
+    """A crash mid-write must not corrupt the candles already stored."""
+    first = generate_ohlcv("NIFTY", date(2024, 1, 1), date(2024, 1, 5), "5m", seed=1)
+    temp_store.write_candles("SIM|ATOMIC", "5m", first, source="simulated")
+    path = temp_store.candle_path("SIM|ATOMIC", "5m")
+    before = path.read_bytes()
+
+    def torn_write(self, target, *args, **kwargs):
+        with open(target, "wb") as fh:
+            fh.write(b"PAR1 half a file")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", torn_write)
+    more = generate_ohlcv("NIFTY", date(2024, 1, 8), date(2024, 1, 12), "5m", seed=1)
+    with pytest.raises(OSError, match="disk full"):
+        temp_store.write_candles("SIM|ATOMIC", "5m", more, source="simulated")
+
+    assert path.read_bytes() == before
+    assert [p.name for p in path.parent.iterdir()] == [path.name], "temp file left behind"
+
+
+def test_store_concurrent_writes_lose_nothing(temp_store):
+    """Overlapping fetches of one instrument must all land in the merged file."""
+    import threading
+
+    weeks = [
+        generate_ohlcv("NIFTY", date(2024, 1, d), date(2024, 1, d + 4), "5m", seed=1)
+        for d in (1, 8, 15, 22)
+    ]
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(len(weeks))
+
+    def write(frame):
+        try:
+            barrier.wait(timeout=10)
+            temp_store.write_candles("SIM|RACE", "5m", frame, source="simulated")
+        except BaseException as exc:  # surfaced below; a thread cannot fail the test itself
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(w,)) for w in weeks]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, errors
+    stored = temp_store.read_candles("SIM|RACE", "5m")
+    assert len(stored) == sum(len(w) for w in weeks)
+    coverage = temp_store.read_coverage("SIM|RACE", "5m")
+    assert coverage["bar_count"] == len(stored)
+    assert coverage["first_bar"] == stored["timestamp"].iloc[0].to_pydatetime()
+    assert coverage["last_bar"] == stored["timestamp"].iloc[-1].to_pydatetime()

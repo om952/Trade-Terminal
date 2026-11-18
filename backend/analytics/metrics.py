@@ -16,7 +16,7 @@ and getting `periods_per_year` wrong on intraday data inflates it by ~9x on
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 

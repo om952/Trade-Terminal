@@ -19,7 +19,7 @@ from typing import Iterable, Literal
 
 import httpx
 
-from backend.core.config import IST, settings
+from backend.core.config import IST
 
 log = logging.getLogger(__name__)
 

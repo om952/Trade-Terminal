@@ -9,20 +9,18 @@ and every other number in the metrics panel rests on solid ground.
 from __future__ import annotations
 
 import math
-
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pandas as pd
 import pytest
 
+from backend.analytics import metrics as M
 from backend.core.config import IST
 from backend.core.interfaces import Side
-from backend.analytics import metrics as M
 from backend.data.simulator import generate_ohlcv
 from backend.execution.costs import (
     SCHEDULES,
-    CostBreakdown,
     Segment,
     breakeven_move,
     compute_costs,
@@ -34,7 +32,6 @@ from backend.strategy import templates
 from backend.strategy.runner import FillModel, run_backtest
 from backend.strategy.schema import OptionRight, OptionSpec, Strategy
 from backend.strategy.state import ClosedTrade, TradeReason
-
 
 # ---------------------------------------------------------------------------
 # Cost model — exact arithmetic

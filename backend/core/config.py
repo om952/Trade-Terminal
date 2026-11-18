@@ -68,6 +68,12 @@ class Settings(BaseSettings):
         """
         return None if isinstance(v, str) and not v.strip() else v
 
+    # --- Local API ---
+    # Extra hostnames the API will answer to, comma-separated. Loopback names
+    # are always allowed; anything else is refused to block DNS rebinding.
+    # Leave empty unless the API is deliberately reached under another name.
+    api_allowed_hosts: str = ""
+
     # --- Paths ---
     data_dir: Path = Field(default=ROOT / "data")
 
@@ -78,6 +84,10 @@ class Settings(BaseSettings):
     @property
     def journal_dir(self) -> Path:
         return self.data_dir / "journal"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.data_dir / "logs"
 
     @property
     def db_path(self) -> Path:
@@ -97,7 +107,7 @@ class Settings(BaseSettings):
             )
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.parquet_dir, self.journal_dir):
+        for d in (self.data_dir, self.parquet_dir, self.journal_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

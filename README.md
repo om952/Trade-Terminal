@@ -3,7 +3,8 @@
 Automated trading terminal for Indian markets: visual strategy definition, backtesting,
 paper trading, and live broker execution — all running the same engine.
 
-Build plan and architecture: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
+Roadmap to production: [PRODUCTION_PLAN.md](PRODUCTION_PLAN.md). Original build plan and
+architecture: [Terminal Build Order](https://claude.ai/code/artifact/06d623a9-49ab-4ee2-9750-bbc0f8b25532)
 
 ## Status
 
@@ -181,8 +182,18 @@ data/
 Two processes. Backend first:
 
 ```bash
-.venv/bin/uvicorn backend.api.main:app --reload --port 8000
+.venv/bin/uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+Keep the host at `127.0.0.1`. The API has no login; it is safe because it only
+answers requests from this machine. It refuses any request whose `Host` is not
+a loopback name or whose `Origin` is not its own UI (see
+[backend/api/security.py](backend/api/security.py)).
+
+Logs go to the console and to `data/logs/terminal.log` (rotating, credentials
+redacted). `LOG_LEVEL` in `.env` sets the level. Stopping the server stops any
+running paper sessions cleanly; sessions cut off by a crash are listed as
+"interrupted" in the Live tab and are never resumed without you.
 
 Then the UI (proxies /api to port 8000):
 
@@ -196,14 +207,22 @@ cd frontend && npm run dev        # http://localhost:5173
 .venv/bin/python -m pytest backend/tests -q
 ```
 
-No network or broker token required — the suite runs against the simulator.
+No network or broker token required: the suite runs against the simulator, in
+a temporary data directory. It never reads or writes `data/`, so it is safe to
+run while the API server is up, and it cannot send Telegram alerts or call the
+broker with the credentials in your `.env`.
 
-**Stop the API server first.** DuckDB permits a single writer process, so the
-suite cannot open the database while uvicorn holds it:
+## Development
 
 ```bash
-pkill -f 'uvicorn backend.api.main'
+uv sync --extra dev          # install the locked dependencies (uv.lock)
+.venv/bin/ruff check .       # lint
+.venv/bin/mypy               # type check (informational for now)
 ```
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the tests, lint,
+the frontend build and dependency audits on every push and pull request. After
+changing dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`.
 
 ## Regulatory
 

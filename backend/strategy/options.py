@@ -30,7 +30,7 @@ import pandas as pd
 from backend.core.config import IST
 from backend.data.calendar import is_trading_day
 from backend.data.simulator import black_scholes, build_option_series
-from backend.strategy.schema import OptionSpec, OptionRight
+from backend.strategy.schema import OptionRight, OptionSpec
 
 log = logging.getLogger(__name__)
 

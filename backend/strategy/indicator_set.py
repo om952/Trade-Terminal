@@ -28,7 +28,7 @@ import pandas as pd
 
 from backend.indicators import registry
 from backend.indicators.base import PriceBar, source_value
-from backend.strategy.schema import InlineIndicator, IndicatorSpec
+from backend.strategy.schema import IndicatorSpec, InlineIndicator
 
 NAN = float("nan")
 

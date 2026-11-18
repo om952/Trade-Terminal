@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from backend.data.simulator import generate_ohlcv
 from backend.indicators import pivots as piv
 from backend.indicators import registry
 from backend.indicators.base import (
@@ -31,7 +32,6 @@ from backend.indicators.base import (
     wilder_series,
 )
 from backend.indicators.volume import VWAP, vwap
-from backend.data.simulator import generate_ohlcv
 
 TOLERANCE = 1e-9
 

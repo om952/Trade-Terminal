@@ -30,7 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Callable, Iterator
+from typing import Iterator
 
 import pandas as pd
 

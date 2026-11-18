@@ -18,10 +18,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import date, datetime
 from typing import Any
 
-from backend.core.config import IST
 from backend.live import journal as J
 from backend.live.session import PaperSession, SessionConfig, make_session_id
 

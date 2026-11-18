@@ -22,7 +22,7 @@ from backend.analytics import metrics as M
 from backend.api.main import app
 from backend.data.simulator import generate_ohlcv
 from backend.data.store import write_candles
-from backend.execution.costs import Segment, segment_for
+from backend.execution.costs import segment_for
 from backend.strategy import templates
 from backend.strategy.risk import RiskGuard
 from backend.strategy.runner import FillModel, run_backtest
@@ -31,7 +31,31 @@ from backend.strategy.schema import Strategy
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app)
+    # A loopback base URL: the API rejects any Host that is not local.
+    return TestClient(app, base_url="http://127.0.0.1:8000")
+
+
+@pytest.fixture(scope="module")
+def seeded_instruments() -> None:
+    """A tiny instrument master, so search does not depend on a real sync.
+
+    Two near-matches surround the exact symbol to make the ranking assertion
+    mean something.
+    """
+    from backend.data.store import get_db
+
+    rows = [
+        ("NSE_EQ|INE002A01018", "RELIANCE", "RELIANCE INDUSTRIES LTD", "NSE", "NSE_EQ", "EQ"),
+        ("NSE_EQ|INE013A01015", "RELINFRA", "RELIANCE INFRASTRUCTURE LTD", "NSE", "NSE_EQ", "EQ"),
+        ("NSE_EQ|INE614G01033", "RPOWER", "RELIANCE POWER LTD", "NSE", "NSE_EQ", "EQ"),
+    ]
+    get_db().executemany(
+        """INSERT OR REPLACE INTO instruments
+           (instrument_key, trading_symbol, name, exchange, segment, instrument_type,
+            lot_size, tick_size)
+           VALUES (?,?,?,?,?,?,1,0.05)""",
+        rows,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -91,9 +115,9 @@ def test_unknown_template_404s(client):
     assert client.get("/api/templates/does_not_exist").status_code == 404
 
 
-def test_instrument_search_ranks_exact_match_first(client):
+def test_instrument_search_ranks_exact_match_first(client, seeded_instruments):
     results = client.get("/api/instruments/search", params={"q": "RELIANCE"}).json()["results"]
-    assert results, "instrument master not synced"
+    assert len(results) >= 2
     assert results[0]["trading_symbol"] == "RELIANCE"
 
 

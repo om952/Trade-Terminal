@@ -41,7 +41,7 @@ import pandas as pd
 from backend.core.config import IST
 from backend.data.simulator import black_scholes
 from backend.indicators.base import PriceBar
-from backend.strategy.options import ResolvedOption, realized_volatility, resolve_option
+from backend.strategy.options import ResolvedOption, resolve_option
 from backend.strategy.schema import Leg, LegKind, OptionRight, Strategy
 
 log = logging.getLogger(__name__)

@@ -213,6 +213,14 @@ class PaperSession:
                     reason = self.live.stop_reason or "stopped"
                     break
                 self._on_bar(bar)
+            else:
+                # A stopped source ends its stream instead of yielding another
+                # bar, which lands here rather than on the break above. That is
+                # still a stop, not the end of the data: recording it as
+                # "feed_exhausted" would flatten positions the user never asked
+                # to close and misreport why the session ended.
+                if self._stop.is_set():
+                    reason = self.live.stop_reason or "stopped"
         except Exception as exc:
             self._fail("loop", exc)
             reason = "error"
