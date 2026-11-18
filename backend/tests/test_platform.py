@@ -309,3 +309,11 @@ def test_versions_agree():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     frontend = json.loads((ROOT / "frontend" / "package.json").read_text())["version"]
     assert pyproject == frontend == __version__ == app.version
+
+
+def test_extra_origins_are_opt_in():
+    assert security.allowed_origins("") == security.DEV_ORIGINS
+    extra = security.allowed_origins(" http://127.0.0.1:5174/ ,http://localhost:5173")
+    assert extra == security.DEV_ORIGINS + ("http://127.0.0.1:5174",)
+    assert security.origin_allowed("http://127.0.0.1:5174", "127.0.0.1:8000", extra)
+    assert not security.origin_allowed("http://127.0.0.1:5174", "127.0.0.1:8000")

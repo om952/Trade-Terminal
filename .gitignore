@@ -35,3 +35,7 @@ dist/
 # OS / editor
 .DS_Store
 *.swp
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/

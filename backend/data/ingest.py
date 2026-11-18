@@ -20,9 +20,11 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 
+import pandas as pd
+
 from backend.data import instruments as inst
 from backend.data.calendar import find_gaps
-from backend.data.store import all_coverage, read_candles, read_coverage, write_candles
+from backend.data.store import all_coverage, read_candles, write_candles
 
 log = logging.getLogger("ingest")
 
@@ -77,35 +79,114 @@ def cmd_instruments(args) -> int:
     return 0
 
 
+def _progress(fraction: float, message: str) -> None:
+    print(f"  [{fraction:>4.0%}] {message}")
+
+
 def cmd_fetch(args) -> int:
-    from backend.data.upstox_client import fetch_candles
+    """Fill the cache for a range. Intraday timeframes download 1-minute bars."""
+    from backend.data.cache import get_bars
 
     key = inst.resolve(args.symbol)
-    tf = args.timeframe
-
-    if args.from_date:
-        start = datetime.strptime(args.from_date, "%Y-%m-%d").date()
-    else:
-        # Resume from where storage ends, re-fetching the last day to pick up
-        # any bars the exchange revised after our previous run.
-        cov = read_coverage(key, tf)
-        if cov and cov.get("last_bar"):
-            start = cov["last_bar"].date() - timedelta(days=1)
-            print(f"Resuming from {start} (stored through {cov['last_bar'].date()})")
-        else:
-            start = date.today() - timedelta(days=args.days)
-
     end = datetime.strptime(args.to_date, "%Y-%m-%d").date() if args.to_date else None
+    start = (
+        datetime.strptime(args.from_date, "%Y-%m-%d").date()
+        if args.from_date else date.today() - timedelta(days=args.days)
+    )
 
-    print(f"Fetching {args.symbol} ({key}) {tf} from {start}...")
-    df = fetch_candles(key, tf, start, end)
-    if df.empty:
-        print("No data returned.")
+    print(f"Fetching {args.symbol} ({key}) {args.timeframe} from {start}...")
+    bars = get_bars(key, args.timeframe, start, end, on_progress=_progress)
+    for note in bars.notes:
+        print(f"  note: {note}")
+    if bars.empty:
+        print("No data available.")
+        return 1
+    print(
+        f"  {len(bars.frame):,} {bars.timeframe} bars "
+        f"({bars.frame['timestamp'].iloc[0].date()} .. {bars.frame['timestamp'].iloc[-1].date()})"
+        f"{', derived from ' + bars.derived_from if bars.derived_from else ''}; "
+        f"{bars.fetched_sessions} session(s) downloaded"
+    )
+    return 0
+
+
+def cmd_backfill(args) -> int:
+    """Migrate legacy per-timeframe intraday files onto the 1-minute base.
+
+    Downloads 1-minute bars covering the span of every stored intraday series,
+    after which the cache derives those timeframes instead of reading the old
+    files. The old files are left in place.
+    """
+    from backend.data.cache import MINUTE, broker_ready, ensure, is_fetchable
+
+    ready, reason = broker_ready()
+    if not ready:
+        print(f"Cannot backfill: {reason}")
         return 1
 
-    total = write_candles(key, tf, df, source="upstox")
-    print(f"  +{len(df):,} bars fetched, {total:,} total stored")
-    return 0
+    cov = all_coverage()
+    targets = [
+        r for _, r in cov.iterrows()
+        if is_fetchable(r.instrument_key) and r.timeframe not in ("1m",)
+        and r.timeframe[-1] in ("m", "h")
+    ]
+    if not targets:
+        print("No legacy intraday series to migrate.")
+        return 0
+
+    failures = 0
+    for r in targets:
+        start = pd.Timestamp(r.first_bar).date()
+        end = pd.Timestamp(r.last_bar).date()
+        print(f"{r.instrument_key} {r.timeframe}: 1m base for {start} .. {end}")
+        report = ensure(r.instrument_key, MINUTE, start, end, on_progress=_progress)
+        print(f"  {report.fetched} downloaded, {report.empty} empty, {report.failed} failed")
+        failures += report.failed
+    return 1 if failures else 0
+
+
+def cmd_parity(args) -> int:
+    """Check that bars derived from 1-minute data equal Upstox's native bars.
+
+    Fetches both straight from the API for a recent window and compares them
+    bar by bar. Writes nothing. This is the evidence that deriving 5m, 15m and
+    1h locally changes no backtest result.
+    """
+    from backend.data.cache import derive, session_open
+    from backend.data.upstox_client import Timeframe, fetch_candles
+
+    key = inst.resolve(args.symbol)
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=args.days)
+    tf = Timeframe.parse(args.timeframe)
+
+    minute = fetch_candles(key, "1m", start, end, include_today=False)
+    native = fetch_candles(key, tf, start, end, include_today=False)
+    if minute.empty or native.empty:
+        print("No data returned; check the token and the symbol.")
+        return 1
+
+    derived = derive(minute, tf, session_open(key))
+    merged = native.merge(derived, on="timestamp", how="outer", suffixes=("_native", "_derived"))
+    only_native = merged["open_derived"].isna().sum()
+    only_derived = merged["open_native"].isna().sum()
+    both = merged.dropna(subset=["open_native", "open_derived"])
+
+    tol = args.tolerance
+    print(f"{key} {tf.label}, {start} .. {end}: {len(native):,} native, {len(derived):,} derived")
+    print(f"  only in native: {only_native}, only in derived: {only_derived}")
+    worst = 0
+    for col in ("open", "high", "low", "close"):
+        diff = (both[f"{col}_native"] - both[f"{col}_derived"]).abs()
+        bad = int((diff > tol).sum())
+        worst += bad
+        print(f"  {col:<6} max |diff| {diff.max():.4f}, bars over {tol}: {bad}")
+    vol = (both["volume_native"] - both["volume_derived"]).abs()
+    print(f"  volume max |diff| {vol.max():,.0f} ({int((vol > 0).sum())} bars differ)")
+
+    ok = worst == 0 and only_native == 0 and only_derived == 0
+    print("PARITY OK" if ok else "PARITY FAILED")
+    return 0 if ok else 2
 
 
 def cmd_simulate(args) -> int:
@@ -171,8 +252,8 @@ def cmd_import_csv(args) -> int:
 
 
 def cmd_bootstrap(args) -> int:
-    """Fetch a sensible starter dataset in one command."""
-    from backend.data.upstox_client import fetch_candles
+    """Fill the cache with a sensible starter dataset in one command."""
+    from backend.data.cache import get_bars
 
     symbols = args.symbols or DEFAULT_SYMBOLS
     timeframes = args.timeframes or ["1d", "5m"]
@@ -189,13 +270,12 @@ def cmd_bootstrap(args) -> int:
 
         for tf in timeframes:
             try:
-                df = fetch_candles(key, tf, start)
-                if df.empty:
-                    print(f"  {symbol:<12} {tf:>4}  no data")
+                bars = get_bars(key, tf, start)
+                if bars.empty:
+                    print(f"  {symbol:<12} {tf:>4}  no data ({'; '.join(bars.notes)})")
                     failures += 1
                     continue
-                total = write_candles(key, tf, df, source="upstox")
-                print(f"  {symbol:<12} {tf:>4}  {len(df):>8,} bars  ({total:,} stored)")
+                print(f"  {symbol:<12} {tf:>4}  {len(bars.frame):>8,} bars")
             except Exception as exc:
                 print(f"  {symbol:<12} {tf:>4}  FAILED: {exc}")
                 failures += 1
@@ -217,13 +297,25 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--exchange", default="complete", help="NSE | BSE | MCX | complete")
     sp.set_defaults(func=cmd_instruments)
 
-    sp = sub.add_parser("fetch", help="fetch historical candles from Upstox")
+    sp = sub.add_parser("fetch", help="fill the cache from Upstox for a range")
     sp.add_argument("symbol")
     sp.add_argument("--timeframe", "-t", default="5m")
-    sp.add_argument("--from", dest="from_date", help="YYYY-MM-DD (default: resume)")
-    sp.add_argument("--to", dest="to_date", help="YYYY-MM-DD (default: today)")
-    sp.add_argument("--days", type=int, default=365, help="lookback if no stored data")
+    sp.add_argument("--from", dest="from_date", help="YYYY-MM-DD (default: --days ago)")
+    sp.add_argument("--to", dest="to_date", help="YYYY-MM-DD (default: last completed session)")
+    sp.add_argument("--days", type=int, default=365, help="lookback when --from is not given")
     sp.set_defaults(func=cmd_fetch)
+
+    sp = sub.add_parser(
+        "backfill", help="download 1-minute bases for legacy intraday files"
+    )
+    sp.set_defaults(func=cmd_backfill)
+
+    sp = sub.add_parser("parity", help="compare derived bars with Upstox's native ones")
+    sp.add_argument("symbol")
+    sp.add_argument("--timeframe", "-t", default="5m")
+    sp.add_argument("--days", type=int, default=10)
+    sp.add_argument("--tolerance", type=float, default=0.001)
+    sp.set_defaults(func=cmd_parity)
 
     sp = sub.add_parser("simulate", help="generate synthetic candles")
     sp.add_argument("symbol")

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -27,18 +27,28 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.analytics import metrics as M
-from backend.api.security import DEV_ORIGINS, LocalOnlyMiddleware, parse_extra_hosts
+from backend.agent import service as agent
+from backend.api.security import LocalOnlyMiddleware, allowed_origins, parse_extra_hosts
+from backend.appstate import runs as run_history
+from backend.appstate import strategies as saved_strategies
 from backend.core.config import IST, settings
 from backend.core.logsetup import configure_logging
 from backend.core.version import __version__
+from backend.data import cache
 from backend.data import instruments as inst
-from backend.data.calendar import find_gaps
-from backend.data.store import all_coverage, read_candles, write_candles
+from backend.data.store import all_coverage, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
+from backend.services import backtest as backtest_service
+from backend.services import jobs as job_services
+from backend.services.backtest import (
+    MAX_CHART_BARS,
+    candles_payload,
+    downsample,
+    format_validation_error,
+)
+from backend.services.jobs import runner as job_runner
 from backend.strategy import templates
-from backend.strategy.runner import FillModel, preflight, run_backtest
 from backend.strategy.schema import Strategy
 
 log = logging.getLogger(__name__)
@@ -81,8 +91,11 @@ async def lifespan(_: FastAPI):
     threading.Thread(
         target=_report_interrupted_sessions, name="interrupted-sessions", daemon=True
     ).start()
+    job_runner.start()
 
     yield
+
+    await run_in_threadpool(job_runner.shutdown)
 
     # Stop sessions before the process goes away, so each journal gets its end
     # record instead of looking like a crash on the next start.
@@ -110,65 +123,57 @@ app = FastAPI(
 app.add_middleware(
     LocalOnlyMiddleware,
     extra_hosts=parse_extra_hosts(settings.api_allowed_hosts),
+    allowed_origins=allowed_origins(settings.api_allowed_origins),
 )
 
 # The Vite dev server runs on a different port; in production the frontend is
 # served as static files from this same origin and CORS becomes irrelevant.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(DEV_ORIGINS),
+    allow_origins=list(allowed_origins(settings.api_allowed_origins)),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Chart payloads are capped so a multi-year 1-minute backtest does not try to
-# ship a million candles to a browser that can only render a few thousand.
-MAX_CHART_BARS = 4000
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _downsample(df: pd.DataFrame, limit: int = MAX_CHART_BARS) -> pd.DataFrame:
-    """Keep the most recent `limit` bars.
-
-    Truncating the tail rather than thinning the series: a thinned candle chart
-    shows highs and lows that never happened, and traders read those wicks.
-    """
-    return df.tail(limit) if len(df) > limit else df
-
-
-def _epoch(ts) -> int:
-    value = pd.Timestamp(ts)
-    if value.tz is None:
-        value = value.tz_localize(IST)
-    return int(value.timestamp())
-
-
-def _candles_payload(df: pd.DataFrame) -> list[dict]:
-    return [
-        {
-            "time": _epoch(row.timestamp),
-            "open": float(row.open), "high": float(row.high),
-            "low": float(row.low), "close": float(row.close),
-            "volume": int(row.volume),
-        }
-        for row in df.itertuples(index=False)
-    ]
+def _load_bars(
+    symbol: str, timeframe: str, start: date | None, end: date | None
+) -> cache.Bars:
+    with _service_errors():
+        return backtest_service.load_bars(symbol, timeframe, start, end)
 
 
 def _load_candles(symbol: str, timeframe: str, start: date | None, end: date | None) -> pd.DataFrame:
-    key = symbol if "|" in symbol else _resolve_or_400(symbol)
-    df = read_candles(key, timeframe, start, end)
-    if df.empty:
-        raise HTTPException(
-            404,
-            f"No stored candles for {key} {timeframe}. "
-            f"Fetch them first (POST /api/data/fetch) or generate synthetic data.",
-        )
-    return df
+    return _load_bars(symbol, timeframe, start, end).frame
+
+
+@contextmanager
+def _service_errors():
+    """Map service-layer errors to HTTP statuses, in one place."""
+    from pydantic import ValidationError
+
+    from backend.appstate.jobs import JobNotFound, UnknownJobKind
+    from backend.appstate.runs import RunNotFound
+    from backend.appstate.strategies import StrategyNotFound
+
+    try:
+        yield
+    except HTTPException:
+        raise
+    except (StrategyNotFound, RunNotFound, JobNotFound) as exc:
+        raise HTTPException(404, f"Not found: {exc.args[0] if exc.args else exc}") from exc
+    except UnknownJobKind as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(422, {"errors": format_validation_error(exc)}) from exc
+    except backtest_service.InvalidStrategy as exc:
+        raise HTTPException(422, {"errors": exc.errors}) from exc
+    except backtest_service.InvalidSymbol as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except backtest_service.DataUnavailable as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _resolve_or_400(symbol: str) -> str:
@@ -298,15 +303,17 @@ def candles(
     end: date | None = None,
     limit: int = MAX_CHART_BARS,
 ) -> dict:
-    df = _load_candles(symbol, timeframe, start, end)
+    bars = _load_bars(symbol, timeframe, start, end)
+    df = bars.frame
     total = len(df)
-    df = _downsample(df, limit)
+    df = downsample(df, limit)
     return {
         "symbol": symbol,
         "timeframe": timeframe,
         "total_bars": total,
         "returned": len(df),
-        "candles": _candles_payload(df),
+        "data": bars.describe(),
+        "candles": candles_payload(df),
     }
 
 
@@ -319,31 +326,38 @@ class FetchRequest(BaseModel):
 
 @app.post("/api/data/fetch")
 def fetch_data(req: FetchRequest) -> dict:
-    """Pull history from Upstox into the local store."""
+    """Fill the cache for a range. Intraday timeframes download 1-minute bars once
+    and derive the rest, so a later request at another timeframe is instant."""
     from datetime import timedelta
 
-    from backend.data.upstox_client import fetch_candles
-
     key = _resolve_or_400(req.symbol)
-    start = req.from_date or (date.today() - timedelta(days=req.days))
+    if not cache.is_fetchable(key):
+        raise HTTPException(400, f"{key} is not a broker instrument; nothing to download.")
+    ready, reason = cache.broker_ready()
+    if not ready:
+        raise HTTPException(409, f"Upstox is not connected: {reason}")
 
+    start = req.from_date or (date.today() - timedelta(days=req.days))
     try:
-        df = fetch_candles(key, req.timeframe, start)
+        bars = cache.get_bars(key, req.timeframe, start)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
 
-    if df.empty:
-        raise HTTPException(404, f"Upstox returned no data for {key} {req.timeframe}")
+    if bars.empty:
+        raise HTTPException(404, f"No data for {key} {req.timeframe}. {' '.join(bars.notes)}")
 
-    total = write_candles(key, req.timeframe, df, source="upstox")
-    report = find_gaps(read_candles(key, req.timeframe), key, req.timeframe)
+    expected = len(bars.frame["timestamp"].dt.date.unique()) + len(bars.missing_sessions)
+    present = expected - len(bars.missing_sessions)
     return {
         "instrument_key": key,
-        "fetched": len(df),
-        "total_bars": total,
-        "coverage_pct": round(report.coverage_pct, 2),
-        "missing_sessions": len(report.missing_sessions),
-        "clean": report.is_clean,
+        "fetched": bars.fetched_sessions,
+        "total_bars": len(bars.frame),
+        "coverage_pct": round(100.0 * present / expected, 2) if expected else 0.0,
+        "missing_sessions": len(bars.missing_sessions),
+        "clean": not bars.missing_sessions,
+        "data": bars.describe(),
     }
 
 
@@ -407,7 +421,7 @@ def validate_strategy(document: dict[str, Any]) -> dict:
     try:
         strategy = Strategy.model_validate(document)
     except Exception as exc:
-        return {"valid": False, "errors": _format_validation_error(exc)}
+        return {"valid": False, "errors": format_validation_error(exc)}
 
     return {
         "valid": True,
@@ -420,219 +434,237 @@ def validate_strategy(document: dict[str, Any]) -> dict:
     }
 
 
-def _format_validation_error(exc: Exception) -> list[dict]:
-    """Turn a pydantic error into something a form can point at a field with."""
-    errors = getattr(exc, "errors", None)
-    if not callable(errors):
-        return [{"field": "", "message": str(exc)}]
-
-    out = []
-    for err in errors():
-        location = ".".join(str(p) for p in err.get("loc", ()) if p != "__root__")
-        message = err.get("msg", "")
-        out.append({"field": location, "message": message.replace("Value error, ", "")})
-    return out
-
+# ---------------------------------------------------------------------------
+# Backtest
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Backtest
 # ---------------------------------------------------------------------------
 
-class BacktestRequest(BaseModel):
-    strategy: dict[str, Any]
-    symbol: str | None = None          # overrides the document's instrument
-    start: date | None = None
-    end: date | None = None
-    starting_capital: float = Field(default=1_000_000, gt=0)
-    lot_size: int = Field(default=1, ge=1, le=10_000)
-    slippage_bps: float | None = None
-    max_leverage: float = Field(default=5.0, gt=0, le=50)
-    include_chart: bool = True
+class BacktestRequest(backtest_service.BacktestParams):
+    strategy_id: str | None = None      # file the run under a saved strategy
 
 
 @app.post("/api/backtest")
 def backtest(req: BacktestRequest) -> dict:
+    """Run a backtest in the request and record it. Long runs: POST /api/jobs/backtest."""
+    params = backtest_service.BacktestParams.model_validate(
+        req.model_dump(exclude={"strategy_id"})
+    )
+    with _service_errors():
+        return job_services.backtest_and_record(params, strategy_id=req.strategy_id)
+
+
+# ---------------------------------------------------------------------------
+# Saved strategies, runs and jobs
+# ---------------------------------------------------------------------------
+
+class SaveStrategyRequest(BaseModel):
+    document: dict[str, Any]
+    origin: Literal["manual", "template", "agent", "import"] = "manual"
+    note: str = Field(default="", max_length=500)
+
+
+def _saved(version: saved_strategies.Version, created: bool) -> dict:
+    return {**version.as_dict(), "new_version": created}
+
+
+@app.get("/api/strategies")
+def strategies_list(include_archived: bool = False) -> dict:
+    return {"strategies": saved_strategies.list_all(include_archived)}
+
+
+@app.post("/api/strategies", status_code=201)
+def strategies_create(req: SaveStrategyRequest) -> dict:
+    with _service_errors():
+        version, created = saved_strategies.save(req.document, origin=req.origin, note=req.note)
+    return _saved(version, created)
+
+
+@app.get("/api/strategies/{strategy_id}")
+def strategies_get(strategy_id: str, version: int | None = None) -> dict:
+    with _service_errors():
+        current = saved_strategies.get(strategy_id, version)
+        versions = saved_strategies.history(strategy_id)
+    return {
+        **current.as_dict(),
+        "versions": [v.as_dict(include_document=False) for v in versions],
+    }
+
+
+@app.put("/api/strategies/{strategy_id}")
+def strategies_update(strategy_id: str, req: SaveStrategyRequest) -> dict:
+    """Save a new version. Saving an unchanged document returns the current one."""
+    with _service_errors():
+        version, created = saved_strategies.save(
+            req.document, strategy_id=strategy_id, origin=req.origin, note=req.note
+        )
+    return _saved(version, created)
+
+
+@app.delete("/api/strategies/{strategy_id}")
+def strategies_archive(strategy_id: str) -> dict:
+    """Archive: hidden from the list, versions and runs kept. Saving again restores it."""
+    with _service_errors():
+        saved_strategies.archive(strategy_id)
+    return {"id": strategy_id, "archived": True}
+
+
+@app.get("/api/runs")
+def runs_list(
+    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50
+) -> dict:
+    return {"runs": run_history.list_runs(strategy_id, strategy_hash, limit)}
+
+
+@app.get("/api/runs/{run_id}")
+def runs_get(run_id: str, include_result: bool = True) -> dict:
+    with _service_errors():
+        return run_history.get(run_id, include_result)
+
+
+@app.post("/api/jobs/backtest", status_code=202)
+def jobs_backtest(req: job_services.BacktestJob) -> dict:
+    """Queue a backtest. Poll GET /api/jobs/{id}; the result names the recorded run."""
+    with _service_errors():
+        document, _ = job_services.resolve_document(req)
+        backtest_service.validate(document)          # reject a bad document now, not later
+        return job_runner.submit("backtest", req.model_dump(mode="json"))
+
+
+@app.post("/api/jobs/fetch", status_code=202)
+def jobs_fetch(req: job_services.FetchJob) -> dict:
+    """Queue a download into the cache, with progress."""
+    with _service_errors():
+        key = backtest_service.resolve(req.symbol)
+        if not cache.is_fetchable(key):
+            raise HTTPException(400, f"{key} is not a broker instrument; nothing to download.")
+        return job_runner.submit("fetch", req.model_dump(mode="json"))
+
+
+@app.get("/api/jobs")
+def jobs_list(limit: int = 50, kind: str | None = None) -> dict:
+    return {"jobs": job_runner.list(limit, kind)}
+
+
+@app.get("/api/jobs/{job_id}")
+def jobs_get(job_id: str) -> dict:
+    with _service_errors():
+        return job_runner.get(job_id)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def jobs_cancel(job_id: str) -> dict:
+    with _service_errors():
+        return job_runner.cancel(job_id)
+
+
+# ---------------------------------------------------------------------------
+# Strategy builder conversations
+# ---------------------------------------------------------------------------
+
+class BuilderBacktestSettings(BaseModel):
+    start: date | None = None
+    end: date | None = None
+    starting_capital: float | None = Field(default=None, gt=0)
+    lot_size: int | None = Field(default=None, ge=1, le=10_000)
+    symbol: str | None = None
+
+
+class StartConversationRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    backtest: BuilderBacktestSettings = Field(default_factory=BuilderBacktestSettings)
+
+
+@contextmanager
+def _agent_errors():
+    from backend.agent.service import ConversationNotFound, InvalidReply, TurnInProgress
+
     try:
-        strategy = Strategy.model_validate(req.strategy)
-    except Exception as exc:
-        raise HTTPException(422, {"errors": _format_validation_error(exc)}) from exc
-
-    symbol = req.symbol or strategy.instrument.symbol
-    df = _load_candles(symbol, strategy.timeframe, req.start, req.end)
-
-    warnings = preflight(strategy, df)
-    capital = Decimal(str(req.starting_capital))
-
-    from backend.execution.costs import segment_for
-    from backend.strategy.risk import RiskGuard
-
-    segment = segment_for(
-        strategy.instrument.segment, strategy.is_intraday, strategy.legs[0].kind.value
-    )
-    fill_model = FillModel(
-        slippage_bps=req.slippage_bps
-        if req.slippage_bps is not None
-        else strategy.costs.slippage_bps,
-        segment=segment,
-    )
-    guard = RiskGuard(rules=strategy.risk, max_leverage=Decimal(str(req.max_leverage)))
-
-    result = run_backtest(
-        strategy, df,
-        starting_capital=capital,
-        lot_size=req.lot_size,
-        fill_model=fill_model,
-        risk=guard,
-        collect_events=req.include_chart,
-    )
-
-    stats = M.compute_metrics(result.equity_curve, result.trades, capital, strategy.timeframe)
-    split = None
-    if len(result.equity_curve) > 50:
-        try:
-            sp = M.split_metrics(result.equity_curve, result.trades, capital, strategy.timeframe)
-            split = {
-                "split_date": sp.split_date.isoformat(),
-                "in_sample": sp.in_sample.as_dict(),
-                "out_of_sample": sp.out_of_sample.as_dict(),
-                "degradation_pct": round(sp.degradation_pct, 2),
-                "verdict": sp.verdict,
-            }
-        except ValueError:
-            split = None
-
-    payload: dict[str, Any] = {
-        "strategy_id": result.strategy_id,
-        "strategy_hash": result.strategy_hash,
-        "symbol": symbol,
-        "timeframe": strategy.timeframe,
-        "segment": segment.value,
-        "synthetic_data": symbol.startswith("SIM|"),
-        "warnings": warnings,
-        "metrics": stats.as_dict(),
-        "split": split,
-        "trades": [t.as_dict() for t in result.trades],
-        "equity_curve": _equity_payload(result.equity_curve),
-        "costs": _cost_context(segment, req.lot_size, df),
-        "blocked_reasons": _blocked_summary(result),
-    }
-
-    if req.include_chart:
-        payload["chart"] = _chart_payload(strategy, df, result)
-
-    return payload
+        yield
+    except ConversationNotFound as exc:
+        raise HTTPException(404, f"No conversation {exc.args[0]}") from exc
+    except TurnInProgress as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except InvalidReply as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
-def _equity_payload(curve: list[tuple[datetime, Decimal]]) -> list[dict]:
-    """Equity and drawdown, downsampled for the browser."""
-    if not curve:
-        return []
-
-    # Ceiling division: floor division rounds the step down, which lets the
-    # result overshoot the cap (27,525 bars // 4,000 gives step 6 and 4,588
-    # points). The cap exists to bound the payload, so it has to hold.
-    step = max(1, -(-len(curve) // MAX_CHART_BARS))
-    sampled = curve[::step]
-
-    peak = float("-inf")
-    out = []
-    for ts, value in sampled:
-        equity = float(value)
-        peak = max(peak, equity)
-        drawdown = (equity - peak) / peak * 100.0 if peak > 0 else 0.0
-        out.append({"time": _epoch(ts), "equity": round(equity, 2), "drawdown": round(drawdown, 3)})
-    return out
+@app.get("/api/agent/conversations")
+def agent_list(limit: int = 50) -> dict:
+    return {"conversations": agent.list_conversations(limit)}
 
 
-def _chart_payload(strategy: Strategy, df: pd.DataFrame, result) -> dict:
-    """Candles, indicator overlays and trade markers for the chart tab."""
-    from backend.strategy import conditions as C
-    from backend.strategy.indicator_set import VectorizedIndicatorSet
-
-    view = _downsample(df)
-    first_time = _epoch(view["timestamp"].iloc[0])
-
-    inline = C.collect_inline(strategy.entry) + C.collect_inline(strategy.exit)
-    indicators = VectorizedIndicatorSet(df, strategy.indicators, inline)
-
-    # Only overlay indicators that share the price scale; oscillators like RSI
-    # would compress the candles into a flat line if drawn on the same axis.
-    overlays: list[dict] = []
-    panes: list[dict] = []
-    price_like = {"SMA", "EMA", "WMA", "DEMA", "SUPERTREND", "BOLLINGER", "KELTNER", "DONCHIAN", "PSAR"}
-
-    tail = len(df) - len(view)
-    for spec in strategy.indicators:
-        outputs = registry.get(spec.type).outputs or ("",)
-        for output in outputs:
-            ref = f"{spec.id}.{output}" if output else spec.id
-            series = indicators._columns.get(ref)
-            if series is None:
-                continue
-            points = [
-                {"time": _epoch(t), "value": None if v != v else round(float(v), 4)}
-                for t, v in zip(view["timestamp"], series.iloc[tail:])
-            ]
-            points = [p for p in points if p["value"] is not None]
-            entry = {"id": ref, "type": spec.type, "output": output or "value", "data": points}
-            (overlays if spec.type.upper() in price_like else panes).append(entry)
-
-    markers = []
-    for trade in result.trades:
-        if _epoch(trade.entry_time) < first_time:
-            continue
-        markers.append({
-            "time": _epoch(trade.entry_time),
-            "position": "belowBar" if trade.direction == "LONG" else "aboveBar",
-            "color": "#0B6B4F" if trade.direction == "LONG" else "#A32218",
-            "shape": "arrowUp" if trade.direction == "LONG" else "arrowDown",
-            "text": f"{trade.direction} {trade.quantity}",
-        })
-        markers.append({
-            "time": _epoch(trade.exit_time),
-            "position": "aboveBar" if trade.direction == "LONG" else "belowBar",
-            "color": "#0B6B4F" if trade.is_win else "#A32218",
-            "shape": "circle",
-            "text": f"{trade.reason.value} {float(trade.net_pnl):+,.0f}",
-        })
-
-    return {
-        "candles": _candles_payload(view),
-        "overlays": overlays,
-        "panes": panes,
-        "markers": sorted(markers, key=lambda m: m["time"]),
-        "truncated": len(df) > len(view),
-        "total_bars": len(df),
-    }
+@app.post("/api/agent/conversations", status_code=202)
+def agent_start(req: StartConversationRequest) -> dict:
+    """Describe a strategy. The turn runs in the background; poll the conversation."""
+    with _agent_errors():
+        return agent.start(req.text, req.backtest.model_dump(mode="json", exclude_none=True))
 
 
-def _cost_context(segment: Segment, lot_size: int, df: pd.DataFrame) -> dict:
-    """What a round trip costs at this instrument's price — the number that
-    tells you whether the timeframe is even viable."""
-    price = Decimal(str(float(df["close"].iloc[-1])))
-    quantity = max(1, lot_size)
-    rt = round_trip_cost(segment, quantity, price)
-    return {
-        "segment": segment.value,
-        "reference_price": float(price),
-        "quantity": quantity,
-        "round_trip": rt.as_dict(),
-        "breakeven_move": float(breakeven_move(segment, quantity, price)),
-        "breakeven_pct": round(float(breakeven_move(segment, quantity, price) / price * 100), 4),
-    }
+@app.get("/api/agent/conversations/{conversation_id}")
+def agent_view(conversation_id: str) -> dict:
+    with _agent_errors():
+        return agent.view(conversation_id)
 
 
-def _blocked_summary(result) -> dict[str, int]:
-    """How often each risk rule refused an entry.
+@app.post("/api/agent/conversations/{conversation_id}/reply", status_code=202)
+def agent_reply(conversation_id: str, payload: dict[str, Any]) -> dict:
+    """Answer the pending pause: questions, approval, or a follow-up change."""
+    with _agent_errors():
+        return agent.reply(conversation_id, payload)
 
-    Surfacing this is what turns "why did it only take 3 trades?" from a mystery
-    into an answer.
-    """
-    counts: dict[str, int] = {}
-    for event in result.events:
-        if event.blocked and event.blocked.value != "none":
-            counts[event.blocked.value] = counts.get(event.blocked.value, 0) + 1
-    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+@app.post("/api/agent/conversations/{conversation_id}/retry", status_code=202)
+def agent_retry(conversation_id: str) -> dict:
+    with _agent_errors():
+        return agent.retry(conversation_id)
+
+
+@app.post("/api/agent/conversations/{conversation_id}/cancel")
+def agent_cancel(conversation_id: str) -> dict:
+    with _agent_errors():
+        current = agent.view(conversation_id)
+        if current["job"]:
+            job_runner.cancel(current["job"]["id"])
+        return agent.view(conversation_id)
+
+
+# ---------------------------------------------------------------------------
+# LLM settings
+# ---------------------------------------------------------------------------
+
+class LLMKeyRequest(BaseModel):
+    provider: Literal["anthropic"] = "anthropic"
+    api_key: str = Field(min_length=20, max_length=500)
+
+
+@app.get("/api/llm/status")
+def llm_status() -> dict:
+    from backend.llm import factory
+
+    return factory.status()
+
+
+@app.put("/api/llm/key")
+def llm_set_key(req: LLMKeyRequest) -> dict:
+    """Store the key in the OS keychain. It is never returned or logged."""
+    from backend.llm import factory, keys
+
+    try:
+        keys.set_key(req.provider, req.api_key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return factory.status()
+
+
+@app.delete("/api/llm/key")
+def llm_delete_key(provider: Literal["anthropic"] = "anthropic") -> dict:
+    from backend.llm import factory, keys
+
+    keys.delete_key(provider)
+    return factory.status()
 
 
 @app.get("/api/costs/preview")
@@ -687,7 +719,7 @@ def live_start(req: LiveStartRequest) -> dict:
     try:
         strategy = Strategy.model_validate(req.strategy)
     except Exception as exc:
-        raise HTTPException(422, {"errors": _format_validation_error(exc)}) from exc
+        raise HTTPException(422, {"errors": format_validation_error(exc)}) from exc
 
     symbol = _resolve_or_400(req.symbol or strategy.instrument.symbol)
 
@@ -702,7 +734,15 @@ def live_start(req: LiveStartRequest) -> dict:
         # Warming up on the newest bars in the store instead — which is what a
         # live session correctly does — would evaluate the opening bars of an old
         # window against indicator values drawn from months later.
-        history = _load_candles(symbol, strategy.timeframe, None, req.replay_end)
+        from backend.data.upstox_client import Timeframe
+
+        warm_from = (
+            cache.warmup_start(
+                Timeframe.parse(strategy.timeframe), symbol, req.warmup_bars, req.replay_start
+            )
+            if req.replay_start is not None else None
+        )
+        history = _load_candles(symbol, strategy.timeframe, warm_from, req.replay_end)
         if req.replay_start is not None:
             history_before = pd.Timestamp(req.replay_start).tz_localize(IST).to_pydatetime()
             df = history[history["timestamp"] >= history_before].reset_index(drop=True)

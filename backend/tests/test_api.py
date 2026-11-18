@@ -224,7 +224,7 @@ def test_backtest_404s_on_missing_data(client):
         "starting_capital": 100000, "lot_size": 1,
     })
     assert response.status_code == 404
-    assert "No stored candles" in response.json()["detail"]
+    assert "No candles for" in response.json()["detail"]
 
 
 def test_backtest_surfaces_blocked_reasons(client, seeded_dataset):

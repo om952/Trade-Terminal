@@ -68,11 +68,26 @@ class Settings(BaseSettings):
         """
         return None if isinstance(v, str) and not v.strip() else v
 
+    # --- Strategy builder (LLM) ---
+    # Keys live in the OS keychain (Settings in the UI), not here.
+    llm_provider: str = "anthropic"
+    llm_model: str = "claude-opus-5-5"
+    llm_effort: str = "high"
+    # Only for LLM_PROVIDER=scripted (end-to-end tests, offline demos).
+    llm_script: Path | None = None
+    # Hard caps per compile, enforced before every model call.
+    llm_max_tokens_per_compile: int = 200_000
+    llm_max_steps: int = 8
+    llm_max_seconds: float = 300.0
+
     # --- Local API ---
     # Extra hostnames the API will answer to, comma-separated. Loopback names
     # are always allowed; anything else is refused to block DNS rebinding.
     # Leave empty unless the API is deliberately reached under another name.
     api_allowed_hosts: str = ""
+    # Extra browser origins allowed to call the API (comma-separated), beyond
+    # the Vite dev server and the API's own origin. For test UIs on other ports.
+    api_allowed_origins: str = ""
 
     # --- Paths ---
     data_dir: Path = Field(default=ROOT / "data")
@@ -88,6 +103,11 @@ class Settings(BaseSettings):
     @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
+
+    @property
+    def app_db_path(self) -> Path:
+        """App state: strategies, versions, runs, jobs (SQLite)."""
+        return self.data_dir / "app.sqlite"
 
     @property
     def db_path(self) -> Path:

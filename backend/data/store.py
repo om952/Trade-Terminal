@@ -82,6 +82,17 @@ CREATE TABLE IF NOT EXISTS coverage (
     PRIMARY KEY (instrument_key, timeframe)
 );
 
+-- Every session the read-through cache has checked, per base timeframe
+-- (backend/data/cache.py). bars = 0 records a session with no data.
+CREATE TABLE IF NOT EXISTS session_ledger (
+    instrument_key VARCHAR,
+    timeframe      VARCHAR,
+    day            DATE,
+    bars           INTEGER,
+    checked_on     DATE,
+    PRIMARY KEY (instrument_key, timeframe, day)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   VARCHAR PRIMARY KEY,
     value VARCHAR

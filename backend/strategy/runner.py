@@ -19,6 +19,7 @@ The seam is `FillModel`, so nothing above it has to change.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -42,6 +43,9 @@ from backend.strategy.state import Portfolio, TradeReason
 log = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
+
+# How often run_backtest reports progress, in bars.
+PROGRESS_EVERY = 1000
 
 
 @dataclass
@@ -85,11 +89,15 @@ def run_backtest(
     risk: RiskGuard | None = None,
     collect_events: bool = True,
     iv_premium: float = 0.0,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> EngineResult:
     """Run a strategy over historical bars.
 
     `collect_events` keeps a per-bar record for the UI and for debugging. Turn it
     off for large sweeps where only the trades and equity curve matter.
+
+    `on_progress(done, total)` is called every PROGRESS_EVERY bars. It observes
+    only; to cancel a run, raise from it, and the exception propagates.
     """
     if df.empty:
         raise ValueError("Cannot backtest an empty DataFrame")
@@ -134,7 +142,10 @@ def run_backtest(
     last_ts: datetime | None = None
     last_close = ZERO
 
+    total_bars = len(df)
     for index, ts, bar in bars_with_timestamps(df):
+        if on_progress is not None and index % PROGRESS_EVERY == 0:
+            on_progress(index, total_bars)
         indicators.seek(index)
         last_ts, last_close = ts, Decimal(str(bar.close))
 

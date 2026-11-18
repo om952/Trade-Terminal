@@ -31,6 +31,35 @@ os.environ["DATA_DIR"] = str(_TEST_DATA_DIR)
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["TELEGRAM_CHAT_ID"] = ""
 os.environ["UPSTOX_ACCESS_TOKEN"] = ""
+# No real model calls: the SDK must not find a key, and the OS keychain is
+# replaced by an in-memory one below so tests never read or write the real one.
+for _var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+    os.environ.pop(_var, None)
+
+import keyring  # noqa: E402
+from keyring.backend import KeyringBackend  # noqa: E402
+from keyring.errors import PasswordDeleteError  # noqa: E402
+
+
+class MemoryKeyring(KeyringBackend):
+    priority = 1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service, username):
+        return self.store.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.store[(service, username)] = password
+
+    def delete_password(self, service, username):
+        if self.store.pop((service, username), None) is None:
+            raise PasswordDeleteError(username)
+
+
+keyring.set_keyring(MemoryKeyring())
 
 from backend.core.config import ROOT, settings  # noqa: E402
 
