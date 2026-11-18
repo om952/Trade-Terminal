@@ -350,6 +350,13 @@ function ResultCard({ run, document, onOpenRun, onStartPaper }: {
         {run.data.missing_sessions ? ` · ${run.data.missing_sessions} missing session(s)` : ""}
         {run.trials > 1 ? ` · backtest #${run.trials} of this exact strategy` : ""}
       </p>
+      {run.family_trials && run.family_trials.runs > 1 && (
+        <p className="hint" title="Retuning numbers, times, strikes, the instrument or the timeframe keeps a strategy in the same family. The more variants tried, the more a good backtest owes to luck.">
+          {run.family_trials.runs} backtests across {run.family_trials.variants} variant
+          {run.family_trials.variants === 1 ? "" : "s"} of this idea so far. The more variants tried,
+          the more of the best result is luck.
+        </p>
+      )}
       {run.warnings.length > 0 && (
         <ul className="caveats">{run.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
       )}

@@ -60,8 +60,12 @@ def backtest_and_record(
         kind="backtest", document=document, params=run_params, payload=payload,
         strategy_id=strategy_id, job_id=job_id,
     )
+    from backend.strategy.family import family_key
+
     payload["run_id"] = run_id
     payload["trials"] = runs.trial_count(payload["strategy_hash"])
+    payload["family"] = family_key(document)
+    payload["family_trials"] = runs.family_trials(payload["family"])
     return json.loads(to_json(payload))
 
 

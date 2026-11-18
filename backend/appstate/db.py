@@ -22,7 +22,7 @@ import logging
 import math
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -31,7 +31,25 @@ from backend.core.config import settings
 
 log = logging.getLogger(__name__)
 
-MIGRATIONS: list[str] = [
+def _add_run_families(conn: sqlite3.Connection) -> None:
+    """3: every run gets its strategy family (backend/strategy/family.py),
+    including the runs recorded before families existed."""
+    from backend.strategy.family import family_key
+
+    conn.execute("ALTER TABLE runs ADD COLUMN family TEXT")
+    rows = conn.execute("SELECT id, document FROM runs").fetchall()
+    for row in rows:
+        try:
+            key = family_key(json.loads(row[1]))
+        except Exception:                     # a document this build cannot read
+            key = None
+        conn.execute("UPDATE runs SET family = ? WHERE id = ?", [key, row[0]])
+    conn.execute("CREATE INDEX ix_runs_family ON runs(family, created_at)")
+
+
+Migration = str | Callable[[sqlite3.Connection], None]
+
+MIGRATIONS: list[Migration] = [
     # 1: strategies with version history, runs, jobs.
     """
     CREATE TABLE strategies (
@@ -102,6 +120,7 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX ix_conversations_updated ON conversations(updated_at);
     """,
+    _add_run_families,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -152,16 +171,30 @@ def _migrate(conn: sqlite3.Connection, path: Path) -> None:
             )
         for number in range(current + 1, SCHEMA_VERSION + 1):
             log.info("Migrating app database to schema version %d", number)
-            # executescript commits on its own; run each step as one transaction
-            # so a failure leaves the database at the previous version.
-            conn.executescript(
-                f"BEGIN IMMEDIATE;\n{MIGRATIONS[number - 1]}\nPRAGMA user_version = {number};\nCOMMIT;"
-            )
+            _apply(conn, number, MIGRATIONS[number - 1])
         try:
             path.chmod(0o600)
         except OSError:
             pass
         _migrated.add(path)
+
+
+def _apply(conn: sqlite3.Connection, number: int, step: Migration) -> None:
+    """One migration as one transaction: it lands whole or not at all."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if callable(step):
+            step(conn)
+        else:
+            # execute() takes one statement; split the script ourselves rather
+            # than use executescript(), which commits whatever came before.
+            for statement in filter(None, (s.strip() for s in step.split(";"))):
+                conn.execute(statement)
+        conn.execute(f"PRAGMA user_version = {number}")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
 
 
 def to_json(value: Any, **kwargs: Any) -> str:

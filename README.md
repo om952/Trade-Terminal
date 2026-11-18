@@ -177,6 +177,46 @@ data/
   terminal.duckdb     instruments, coverage, metadata (gitignored)
 ```
 
+## Installing (without a checkout)
+
+Build a wheel once, then install it anywhere with `pipx` or `uv tool`:
+
+```bash
+(cd frontend && npm ci && npm run build) && uv build --wheel
+uv tool install dist/trade_terminal-*.whl      # or: pipx install dist/trade_terminal-*.whl
+trade-terminal                                 # starts the app and opens the browser
+```
+
+The wheel carries the built UI, so there is one process and one port. An
+installed copy keeps its settings (`.env`), data, logs and backups in a
+per-user folder; `trade-terminal where` prints it, and `TRADE_TERMINAL_HOME`
+moves it. Other commands:
+
+| Command | What it does |
+|---|---|
+| `trade-terminal doctor` | Checks the installation and says what to fix |
+| `trade-terminal backup` / `restore FILE` | Strategies, runs, conversations and journals (not market data). A backup is also taken daily at startup; the last 14 are kept |
+| `trade-terminal diagnostics` | A bundle that is safe to share: versions, health checks, redacted log tail; no strategies, trades or credentials |
+| `trade-terminal sync-instruments` | Refreshes the instrument master |
+| `trade-terminal credentials list` / `set NAME` / `import` | Broker and alert secrets in the OS keychain (see below) |
+
+The server binds to 127.0.0.1 only.
+
+### Credentials
+
+The Upstox API secret, a pasted Upstox token, the Telegram bot token and the
+Kite secret live in the OS keychain (macOS Keychain, Windows Credential
+Manager, Secret Service on Linux), as does the session from the Upstox browser
+login. `.env` still works as a fallback. To move what is there now:
+
+```bash
+trade-terminal credentials import --remove-from-env    # or: python -m backend.cli credentials ...
+trade-terminal credentials list                         # where each one lives; never the value
+```
+
+Each value is read back from the keychain before its `.env` line is removed.
+If both places hold different values the keychain wins, and `doctor` says so.
+
 ## Running the app
 
 Two processes. Backend first:
@@ -238,6 +278,26 @@ uv sync --extra dev          # install the locked dependencies (uv.lock)
 .venv/bin/ruff check .       # lint
 .venv/bin/mypy               # type check (informational for now)
 ```
+
+### Measuring the assistant
+
+`evals/cases.json` holds 50 strategy descriptions with gold specs: clear rules,
+option structures, risk and session details, Hinglish and trader shorthand,
+requests that should prompt a question, and ones that cannot be expressed.
+About 30% are a holdout.
+
+```bash
+.venv/bin/python -m backend.evals.runner --split dev --limit 10 --confirm-spend   # smoke check
+.venv/bin/python -m backend.evals.runner --split dev --confirm-spend --record      # tune against this
+.venv/bin/python -m backend.evals.runner --split holdout --confirm-spend --record  # report this
+.venv/bin/python -m backend.evals.runner --replay evals/recordings/<file>.json     # re-score, free
+```
+
+A live run calls the model and costs money, hence `--confirm-spend`. Reports
+land in `evals/reports/`. Tune prompts against `dev` only; the holdout number
+is the one to quote, and only if the prompt was not tuned on it. Scoring
+compares meaning, not spelling (indicator names, condition order, `a < b`
+versus `b > a`), and only the fields a prompt actually states.
 
 Frontend tests:
 

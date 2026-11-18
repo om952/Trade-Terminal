@@ -169,6 +169,12 @@ def configure_logging(
     for name in _QUIET_LOGGERS:
         logging.getLogger(name).setLevel(max(resolved, logging.WARNING))
 
+    # Keychain-held secrets are not in settings; teach the redactor them now,
+    # before anything can log one.
+    from backend.core import credentials
+
+    credentials.register_all()
+
 
 def _install(logger: logging.Logger, handler: logging.Handler) -> None:
     logger.addHandler(handler)

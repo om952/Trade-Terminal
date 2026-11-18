@@ -76,6 +76,7 @@ class RiskGuard:
     halted: bool = field(default=False, init=False)
     halt_reason: Block = field(default=Block.NONE, init=False)
     entries_today: int = field(default=0, init=False)
+    last_entry_bar: int | None = field(default=None, init=False)
     last_exit_bar: int | None = field(default=None, init=False)
 
     # -- session -------------------------------------------------------------
@@ -84,9 +85,21 @@ class RiskGuard:
         self.halted = False
         self.halt_reason = Block.NONE
         self.entries_today = 0
+        self.last_entry_bar = None
         self.last_exit_bar = None
 
-    def record_entry(self) -> None:
+    def record_entry(self, bar_index: int | None = None) -> None:
+        """Count one entry per signal, however many legs it fills.
+
+        The legs of a multi-leg entry all fill on the same bar. Counting each
+        fill would make "max 2 trades a day" mean one iron condor, or half a
+        spread's worth of re-entries: the limits are written in trades, so a
+        trade is one entry of the whole structure.
+        """
+        if bar_index is not None:
+            if bar_index == self.last_entry_bar:
+                return
+            self.last_entry_bar = bar_index
         self.entries_today += 1
 
     def record_exit(self, bar_index: int) -> None:

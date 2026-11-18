@@ -394,6 +394,52 @@ def test_max_trades_per_day():
     assert decision.reason is Block.MAX_TRADES
 
 
+def test_a_multi_leg_entry_counts_as_one_trade():
+    from backend.strategy.schema import RiskRules
+
+    guard = RiskGuard(rules=RiskRules(max_trades_per_day=2))
+    for _leg in range(4):                 # an iron condor filling on bar 7
+        guard.record_entry(7)
+    assert guard.entries_today == 1
+    assert guard.may_enter(Portfolio(), 8)
+    guard.record_entry(12)
+    guard.record_entry(12)
+    assert guard.entries_today == 2
+    assert guard.may_enter(Portfolio(), 13).reason is Block.MAX_TRADES
+    guard.start_new_day()
+    guard.record_entry(12)                # a new day may reuse nothing from the last
+    assert guard.entries_today == 1
+
+
+def test_max_trades_per_day_counts_entries_not_legs_in_a_backtest():
+    """A two-leg strategy capped at 2 trades a day must get 2 entries, not 1."""
+    from collections import Counter
+    from datetime import date as _date
+
+    from backend.data.simulator import generate_ohlcv
+
+    document = {
+        "name": "two legs", "instrument": {"symbol": "SIM|X", "segment": "index"}, "timeframe": "5m",
+        "entry": {"op": "AND", "conditions": [{"left": "close", "cmp": ">", "right": 0}]},
+        "legs": [
+            {"id": "a", "action": "BUY", "kind": "equity", "lots": 1,
+             "stop_loss": {"type": "percent", "value": 0.05}, "target": {"type": "percent", "value": 0.05}},
+            {"id": "b", "action": "BUY", "kind": "equity", "lots": 1,
+             "stop_loss": {"type": "percent", "value": 0.05}, "target": {"type": "percent", "value": 0.05}},
+        ],
+        "risk": {"max_trades_per_day": 2, "max_concurrent_positions": 2,
+                 "re_entry": {"enabled": True, "max": 10, "cooldown_bars": 0}},
+    }
+    frame = generate_ohlcv("NIFTY", _date(2025, 1, 6), _date(2025, 1, 17), "5m", seed=5)
+    result = run_backtest(Strategy.model_validate(document), frame, collect_events=False)
+
+    entries = {(t.entry_time.date(), t.entry_time) for t in result.trades}
+    per_day = Counter(day for day, _ in entries)
+    assert max(per_day.values()) == 2, f"entry sets per day: {dict(per_day)}"
+    legs_per_entry = Counter(t.entry_time for t in result.trades)
+    assert set(legs_per_entry.values()) == {2}, "every entry should fill both legs"
+
+
 def test_re_entry_disabled_blocks_second_entry():
     from backend.strategy.schema import RiskRules
 

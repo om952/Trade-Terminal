@@ -458,7 +458,7 @@ class StrategyEngine:
             position.entry_fees = fees
             if indicators is not None:
                 self._set_exit_levels(position, leg, indicators)
-            self.risk.record_entry()
+            self.risk.record_entry(bar_index)
             self.portfolio.day_entry_count += 1
             return None
 

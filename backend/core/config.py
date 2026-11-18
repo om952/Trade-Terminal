@@ -6,6 +6,7 @@ That way there is exactly one place to look when something is misconfigured.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +15,26 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# A source checkout keeps its data and .env next to the code. An installed copy
+# (pipx, uv tool) has no such place: ROOT is site-packages, which must never be
+# written to and is replaced on upgrade. It uses a per-user folder instead.
+# TRADE_TERMINAL_HOME overrides either.
+IS_CHECKOUT = (ROOT / "pyproject.toml").exists()
+
+
+def _home() -> Path:
+    override = os.environ.get("TRADE_TERMINAL_HOME", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if IS_CHECKOUT:
+        return ROOT
+    import platformdirs
+
+    return Path(platformdirs.user_data_dir("trade-terminal", appauthor=False))
+
+
+HOME = _home()
 IST = ZoneInfo("Asia/Kolkata")
 
 
@@ -25,7 +46,7 @@ class Mode(str, Enum):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=ROOT / ".env",
+        env_file=HOME / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -90,7 +111,7 @@ class Settings(BaseSettings):
     api_allowed_origins: str = ""
 
     # --- Paths ---
-    data_dir: Path = Field(default=ROOT / "data")
+    data_dir: Path = Field(default=HOME / "data")
 
     @property
     def parquet_dir(self) -> Path:
@@ -99,6 +120,10 @@ class Settings(BaseSettings):
     @property
     def journal_dir(self) -> Path:
         return self.data_dir / "journal"
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.data_dir / "backups"
 
     @property
     def logs_dir(self) -> Path:
@@ -120,10 +145,13 @@ class Settings(BaseSettings):
 
     def require_upstox(self) -> None:
         """Fail loudly and early rather than at the first API call."""
-        if not self.upstox_api_key or not self.upstox_api_secret.get_secret_value():
+        from backend.core import credentials
+
+        if not self.upstox_api_key or not credentials.get("upstox_api_secret"):
             raise RuntimeError(
-                "UPSTOX_API_KEY / UPSTOX_API_SECRET missing from .env. "
-                "Create an app at https://account.upstox.com/developer/apps"
+                "UPSTOX_API_KEY (in .env) or the Upstox API secret is missing. Store the "
+                "secret with: trade-terminal credentials set upstox_api_secret. Create an app "
+                "at https://account.upstox.com/developer/apps"
             )
 
     def ensure_dirs(self) -> None:

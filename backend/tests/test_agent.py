@@ -426,7 +426,7 @@ def test_readback_describes_what_will_run():
     card = readback.render(strategy)
     text = readback.as_text(card)
     assert "ema9 crosses above sma50 AND rsi > 50 AND rsi is rising" in text
-    assert "SELL 1 lot of the ATM put (current monthly expiry)" in text
+    assert "SELL 1 lot of the at-the-money put (current monthly expiry)" in text
     assert "Every position is closed at 15:10" in text
 
 
@@ -480,3 +480,40 @@ def test_conversation_endpoints(env):
     finally:
         logsetup.reset_logging()
         root.setLevel(level)
+
+
+def test_readback_says_what_a_strike_rule_means():
+    from backend.agent.readback import _strike
+
+    assert _strike("OTM-2", "PE") == _strike("OTM+2", "PE") == "2 strikes out of the money"
+    assert _strike("OTM", "CE") == "1 strike out of the money"
+    assert _strike("ATM+0", "CE") == _strike("ATM", "PE") == "at-the-money"
+    assert _strike("ATM-1", "CE") == "1 strike below the money"
+    assert _strike("ITM+3", "CE") == "3 strikes in the money"
+    assert _strike("STRIKE:24800", "CE") == "24800 strike" and _strike("DELTA:0.30", "PE") == "0.30-delta"
+
+
+def test_stock_symbols_resolve_against_the_instrument_master(env):
+    from backend.agent.graph import resolve_symbol
+    from backend.data.store import get_db
+
+    # Master not synced: keep the symbol; that is a setup problem, not a model error.
+    assert resolve_symbol("reliance") == ("RELIANCE", None)
+    assert resolve_symbol("NSE_EQ|INE002A01018") == ("NSE_EQ|INE002A01018", None)
+
+    get_db().execute(
+        """INSERT INTO instruments (instrument_key, trading_symbol, name, exchange, segment,
+           instrument_type, lot_size, tick_size) VALUES
+           ('NSE_EQ|INE002A01018', 'RELIANCE', 'RELIANCE INDUSTRIES', 'NSE', 'NSE_EQ', 'EQ', 1, 0.05)"""
+    )
+    assert resolve_symbol("Reliance") == ("NSE_EQ|INE002A01018", None)
+    key, error = resolve_symbol("RELIANC")
+    assert key == "RELIANC" and "Unknown instrument" in error
+
+    # An unknown symbol is fed back to the model like any validation error.
+    typo = _document(instrument={"symbol": "RELIANC", "segment": "equity"})
+    fixed = _document(instrument={"symbol": "RELIANCE", "segment": "equity"})
+    env.script += [ready(typo), ready(fixed)]
+    view = _start("EMA cross on Reliance")
+    assert view["pending"]["document"]["instrument"]["symbol"] == "NSE_EQ|INE002A01018"
+    assert "Unknown instrument" in env.calls[1]["messages"][-1]["content"]

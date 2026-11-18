@@ -28,7 +28,9 @@ class Alerts:
     """Sends to Telegram if configured, no-ops otherwise."""
 
     def __init__(self, enabled: bool = True) -> None:
-        token = settings.telegram_bot_token.get_secret_value().strip()
+        from backend.core import credentials
+
+        token = credentials.get("telegram_bot_token")
         self.token = token
         self.chat_id = settings.telegram_chat_id.strip()
         self.enabled = bool(enabled and token and self.chat_id)

@@ -92,6 +92,10 @@ async def lifespan(_: FastAPI):
         target=_report_interrupted_sessions, name="interrupted-sessions", daemon=True
     ).start()
     job_runner.start()
+    # Daily backup of strategies, runs and journals, off the startup path.
+    from backend.ops import backup
+
+    threading.Thread(target=backup.create_if_due, name="backup", daemon=True).start()
 
     yield
 
@@ -190,6 +194,14 @@ def _resolve_or_400(symbol: str) -> str:
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/doctor")
+def doctor_report() -> dict:
+    """Installation health: the same checks as `trade-terminal doctor`."""
+    from backend.ops import doctor
+
+    return doctor.report()
 
 
 @app.get("/api/status")
@@ -513,9 +525,16 @@ def strategies_archive(strategy_id: str) -> dict:
 
 @app.get("/api/runs")
 def runs_list(
-    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50
+    strategy_id: str | None = None, strategy_hash: str | None = None, limit: int = 50,
+    family: str | None = None,
 ) -> dict:
-    return {"runs": run_history.list_runs(strategy_id, strategy_hash, limit)}
+    return {"runs": run_history.list_runs(strategy_id, strategy_hash, limit, family)}
+
+
+@app.get("/api/families")
+def families_list(limit: int = 50) -> dict:
+    """Strategy families and how many backtests each has had (P2.8)."""
+    return {"families": run_history.families(limit)}
 
 
 @app.get("/api/runs/{run_id}")
@@ -665,6 +684,47 @@ def llm_delete_key(provider: Literal["anthropic"] = "anthropic") -> dict:
 
     keys.delete_key(provider)
     return factory.status()
+
+
+# ---------------------------------------------------------------------------
+# Broker and alert credentials (values are write-only)
+# ---------------------------------------------------------------------------
+
+class CredentialRequest(BaseModel):
+    value: str = Field(min_length=8, max_length=5000)
+
+
+@app.get("/api/credentials")
+def credentials_status() -> dict:
+    from backend.core import credentials
+
+    return {"credentials": credentials.status(), "conflicts": credentials.conflicts()}
+
+
+@app.put("/api/credentials/{name}")
+def credentials_set(name: str, req: CredentialRequest) -> dict:
+    """Store in the OS keychain. The value is never returned or logged."""
+    from backend.core import credentials
+
+    if name not in credentials.SPECS or name == "upstox_session":
+        raise HTTPException(404, f"Unknown credential {name!r}")
+    try:
+        credentials.set(name, req.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except credentials.SecretStoreUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return credentials_status()
+
+
+@app.delete("/api/credentials/{name}")
+def credentials_delete(name: str) -> dict:
+    from backend.core import credentials
+
+    if name not in credentials.SPECS:
+        raise HTTPException(404, f"Unknown credential {name!r}")
+    credentials.delete(name)
+    return credentials_status()
 
 
 @app.get("/api/costs/preview")
@@ -834,3 +894,28 @@ def live_snapshot(session_id: str, include_bars: bool = True) -> dict:
         ],
         "errors": state.errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# The UI
+# ---------------------------------------------------------------------------
+# Mounted last, so every /api route above wins. An installed copy carries the
+# built UI inside the package; a checkout serves frontend/dist if it was built.
+# With the UI on the API's own origin there is no CORS involved at all.
+
+def mount_ui(application: FastAPI, directory) -> bool:
+    from fastapi.staticfiles import StaticFiles
+
+    if directory is None:
+        return False
+    application.mount("/", StaticFiles(directory=directory, html=True), name="ui")
+    return True
+
+
+def _mount_bundled_ui() -> None:
+    from backend.ops.doctor import ui_dir
+
+    mount_ui(app, ui_dir())
+
+
+_mount_bundled_ui()
