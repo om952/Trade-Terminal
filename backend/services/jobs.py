@@ -95,28 +95,46 @@ SWEEP_METRICS = (
 )
 
 
-def run_sweep_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
-    """Run every variant of a strategy's sweep, recording each as a run.
+SWEEP_NOTE = (
+    "Every variant is recorded as a trial of this strategy's family. "
+    "The best row of a grid is partly luck; the more rows, the more so."
+)
+
+
+def sweep_and_record(
+    document: dict[str, Any],
+    params: dict[str, Any],
+    *,
+    strategy_id: str | None = None,
+    job_id: str | None = None,
+    on_progress=None,
+) -> dict[str, Any]:
+    """Run every variant of a document's sweep, recording each as a run.
+
+    `params` are backtest settings (symbol, capital, dates...) without the
+    strategy. The job and the chat builder both call this, so a sweep from
+    either one runs the same variants with the same settings.
 
     No "best" variant is named. Picking the top row of a grid is exactly the
     selection the family trial count exists to penalize, so the result reports
-    every row and the count, and leaves the choice (and its caveat) visible.
+    every row in grid order and the count, and leaves the choice (and its
+    caveat) visible.
     """
     from backend.strategy import sweep
     from backend.strategy.family import family_key
 
-    job = BacktestJob.model_validate(params)
-    document, strategy_id = resolve_document(job)
     strategy = backtest_service.validate(document)
     if not strategy.sweep:
         raise ValueError("This strategy has no sweep: add one to vary its parameters.")
 
     grid = sweep.variants(strategy)
-    base = job.model_dump(exclude={"strategy_id", "version", "strategy"})
+    base = {k: v for k, v in params.items() if k not in ("strategy", "strategy_id", "version")}
     rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    first: dict[str, Any] | None = None
     for n, variant in enumerate(grid):
-        ctx.progress(n / len(grid), f"Variant {n + 1} of {len(grid)}: {variant.label}")
+        if on_progress is not None:
+            on_progress(n / len(grid), f"Variant {n + 1} of {len(grid)}: {variant.label}")
         if variant.strategy is None:
             skipped.append({"label": variant.label, "assignment": variant.assignment,
                             "reason": variant.error})
@@ -125,7 +143,8 @@ def run_sweep_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
             **base, "include_chart": False,
             "strategy": variant.strategy.model_dump(mode="json"),
         })
-        payload = backtest_and_record(run_params, strategy_id=strategy_id, job_id=ctx.job_id)
+        payload = backtest_and_record(run_params, strategy_id=strategy_id, job_id=job_id)
+        first = first or payload
         rows.append({
             "label": variant.label,
             "assignment": variant.assignment,
@@ -135,17 +154,33 @@ def run_sweep_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         })
 
     family = family_key(strategy)
-    ctx.progress(1.0, f"Sweep complete: {len(rows)} variants run")
+    if on_progress is not None:
+        on_progress(1.0, f"Sweep complete: {len(rows)} variants run")
     return json.loads(to_json({
         "family": family,
         "family_trials": runs.family_trials(family),
+        "axes": [
+            {"path": axis.path, "label": sweep.path_label(axis.path, document),
+             "values": axis.values}
+            for axis in strategy.sweep
+        ],
+        "symbol": first["symbol"] if first else None,
+        "timeframe": first["timeframe"] if first else strategy.timeframe,
+        "synthetic_data": first["synthetic_data"] if first else None,
+        "data": first["data"] if first else None,
         "variants": rows,
         "skipped": skipped,
-        "note": (
-            "Every variant is recorded as a trial of this strategy's family. "
-            "The best row of a grid is partly luck; the more rows, the more so."
-        ),
+        "note": SWEEP_NOTE,
     }))
+
+
+def run_sweep_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    job = BacktestJob.model_validate(params)
+    document, strategy_id = resolve_document(job)
+    return sweep_and_record(
+        document, job.model_dump(mode="json"), strategy_id=strategy_id,
+        job_id=ctx.job_id, on_progress=ctx.progress,
+    )
 
 
 def run_fetch_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:

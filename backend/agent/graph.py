@@ -11,6 +11,12 @@
        ▼                            ▼
      save ─► backtest ─► explain ─► followup (pause) ─► refine ─► validate ...
 
+A document with a `sweep` runs every variant at the backtest node (each one a
+recorded run, so the whole grid counts toward the family's trials), and the
+explanation is written from the numbers by code, not by the model: a model
+summarizing a grid drifts toward naming a winner, which is the selection the
+trial count exists to discount.
+
 Rules this file enforces in code, not in prompts:
 
 * No backtest before approval: the only edge into `save` and `backtest` is the
@@ -42,6 +48,7 @@ from langgraph.types import interrupt
 
 from backend.agent import numbers, prompts, readback
 from backend.agent.patch import PatchError, apply_patch, decode_ops
+from backend.appstate.jobs import JobCancelled
 from backend.llm.base import LLMClient, LLMError, LLMRefusal, Usage
 from backend.llm.budget import Budget, BudgetExceeded
 from backend.strategy.schema import Strategy
@@ -75,6 +82,7 @@ class BuilderState(TypedDict, total=False):
     version: int | None
     backtest: dict[str, Any]          # parameters for runs
     run: dict[str, Any] | None
+    sweep: dict[str, Any] | None      # the last sweep's summary, when the document had one
     usage: dict[str, int]             # this turn's spend
     error: str | None
 
@@ -131,7 +139,12 @@ def _failure(exc: Exception) -> dict[str, Any]:
 # Nodes
 # ---------------------------------------------------------------------------
 
-def make_nodes(get_llm: Callable[[], LLMClient], run_backtest: Callable[..., dict], save: Callable[..., tuple[str, int]]):
+def make_nodes(
+    get_llm: Callable[[], LLMClient],
+    run_backtest: Callable[..., dict],
+    save: Callable[..., tuple[str, int]],
+    run_sweep: Callable[..., dict] | None = None,
+):
     """Node functions closed over their collaborators, so tests can swap them."""
 
     def compile_node(state: BuilderState) -> dict[str, Any]:
@@ -259,18 +272,38 @@ def make_nodes(get_llm: Callable[[], LLMClient], run_backtest: Callable[..., dic
         }
 
     def backtest_node(state: BuilderState) -> dict[str, Any]:
+        document = state["document"]
+        swept = bool(Strategy.model_validate(document).sweep)
         try:
-            report = run_backtest(state["document"], state.get("backtest") or {}, state.get("strategy_id"))
+            if swept:
+                if run_sweep is None:
+                    raise RuntimeError("sweeps are not available here")
+                report = run_sweep(document, state.get("backtest") or {}, state.get("strategy_id"))
+            else:
+                report = run_backtest(document, state.get("backtest") or {}, state.get("strategy_id"))
+        except JobCancelled:
+            raise                      # a cancel stops the turn; it is not a failed run
         except Exception as exc:
-            text = f"The backtest could not run: {exc}"
+            text = f"The {'sweep' if swept else 'backtest'} could not run: {exc}"
             return {
-                "run": None, "phase": "awaiting_followup",
+                "run": None, "sweep": None, "phase": "awaiting_followup",
                 "transcript": [_event("assistant", "error", text)],
             }
+        if swept:
+            summary = _sweep_summary(report)
+            return {"run": None, "sweep": summary,
+                    "transcript": [_event("system", "sweep", "", sweep=summary)]}
         run = _run_summary(report)
-        return {"run": run, "transcript": [_event("system", "result", "", run=run)]}
+        return {"run": run, "sweep": None, "transcript": [_event("system", "result", "", run=run)]}
 
     def explain_node(state: BuilderState) -> dict[str, Any]:
+        sweep = state.get("sweep")
+        if sweep:
+            text, caveats = _explain_sweep(sweep)
+            return {
+                "phase": "awaiting_followup",
+                "transcript": [_event("assistant", "explanation", text, caveats=caveats)],
+            }
         run = state.get("run")
         if not run:
             return {"phase": "awaiting_followup"}
@@ -465,6 +498,53 @@ def _run_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sweep_summary(report: dict[str, Any]) -> dict[str, Any]:
+    keep = ("family", "family_trials", "axes", "symbol", "timeframe", "synthetic_data",
+            "variants", "skipped", "note")
+    summary = {k: report.get(k) for k in keep}
+    data = report.get("data") or {}
+    summary["data"] = {k: data.get(k) for k in ("source", "first_bar", "last_bar", "bars",
+                                                "missing_sessions", "fingerprint")}
+    return summary
+
+
+def _amount(value: float) -> str:
+    return f"{value:,.0f}"
+
+
+def _explain_sweep(summary: dict[str, Any]) -> tuple[str, list[str]]:
+    """What a grid showed, from its numbers alone. Names no winner."""
+    rows = summary.get("variants") or []
+    skipped = summary.get("skipped") or []
+    parts: list[str] = []
+    if not rows:
+        parts.append(f"None of the {len(skipped)} variants could run; each one failed validation.")
+    else:
+        pnl = [r["metrics"]["net_pnl"] for r in rows if r["metrics"].get("net_pnl") is not None]
+        parts.append(f"Ran {len(rows)} variant{'s' if len(rows) != 1 else ''} of this strategy"
+                     + (f" ({len(skipped)} skipped as not valid)." if skipped else "."))
+        if pnl:
+            profitable = sum(1 for v in pnl if v > 0)
+            parts.append(
+                f"Net P&L ranged from {_amount(min(pnl))} to {_amount(max(pnl))}, "
+                f"and {profitable} of {len(pnl)} made money."
+            )
+        trials = (summary.get("family_trials") or {}).get("runs")
+        if trials:
+            parts.append(f"Every variant counts as a backtest of this idea: {trials} so far.")
+        parts.append(
+            "The best row of a grid is partly luck. A value whose neighbours also hold up "
+            "is more believable than a lone peak."
+        )
+        parts.append("To continue with one variant, say which values to keep.")
+    caveats: list[str] = []
+    if summary.get("synthetic_data"):
+        caveats.append("This ran on synthetic data, so it says nothing about real markets.")
+    if any((r["metrics"].get("total_trades") or 0) < 30 for r in rows):
+        caveats.append("Some variants have fewer than 30 trades, too few to tell apart from chance.")
+    return " ".join(parts), caveats
+
+
 def _explain_facts(state: BuilderState, run: dict[str, Any]) -> dict[str, Any]:
     data = run.get("data") or {}
     return {
@@ -554,8 +634,9 @@ def build(
     run_backtest: Callable[..., dict],
     save: Callable[..., tuple[str, int]],
     checkpointer=None,
+    run_sweep: Callable[..., dict] | None = None,
 ):
-    nodes = make_nodes(get_llm, run_backtest, save)
+    nodes = make_nodes(get_llm, run_backtest, save, run_sweep)
     g = StateGraph(BuilderState)
     for name, fn in nodes.items():
         g.add_node(name, fn)

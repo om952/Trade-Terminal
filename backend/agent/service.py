@@ -18,6 +18,7 @@ import secrets
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -87,6 +88,21 @@ def _run_backtest(document: dict[str, Any], params: dict[str, Any], strategy_id:
     return job_services.backtest_and_record(request, strategy_id=strategy_id)
 
 
+# The running turn's progress hook, so a sweep inside a turn reports each
+# variant (and honours a cancel between variants) like the sweep job does.
+_turn_progress: ContextVar[Callable[[float, str], None] | None] = ContextVar(
+    "turn_progress", default=None
+)
+
+
+def _run_sweep(document: dict[str, Any], params: dict[str, Any], strategy_id: str | None) -> dict:
+    settings_only = builder.default_backtest_params(document, params)
+    settings_only.pop("strategy", None)
+    return job_services.sweep_and_record(
+        document, settings_only, strategy_id=strategy_id, on_progress=_turn_progress.get(),
+    )
+
+
 def graph():
     """The compiled graph, bound to the current data directory's checkpoint file."""
     global _graph, _graph_path
@@ -98,7 +114,8 @@ def graph():
             conn.execute("PRAGMA journal_mode=WAL")
             path.chmod(0o600)
             _graph = builder.build(
-                lambda: _llm_factory(), _run_backtest, _save, checkpointer=SqliteSaver(conn)
+                lambda: _llm_factory(), _run_backtest, _save,
+                checkpointer=SqliteSaver(conn), run_sweep=_run_sweep,
             )
             _graph_path = path
     return _graph
@@ -245,12 +262,16 @@ def run_turn(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
         command = None                     # continue from the last checkpoint
 
     steps = 0
-    for update in graph().stream(command, _config(conversation_id), stream_mode="updates"):
-        for node in update:
-            if node.startswith("__"):
-                continue
-            steps += 1
-            ctx.progress(1 - 0.6 ** steps, NODE_LABELS.get(node, node))
+    token = _turn_progress.set(ctx.progress)
+    try:
+        for update in graph().stream(command, _config(conversation_id), stream_mode="updates"):
+            for node in update:
+                if node.startswith("__"):
+                    continue
+                steps += 1
+                ctx.progress(1 - 0.6 ** steps, NODE_LABELS.get(node, node))
+    finally:
+        _turn_progress.reset(token)
 
     values = graph().get_state(_config(conversation_id)).values
     with transaction() as conn:
@@ -307,6 +328,7 @@ def view(conversation_id: str) -> dict[str, Any]:
         "document": values.get("document"),
         "assumptions": values.get("assumptions") or [],
         "run": values.get("run"),
+        "sweep": values.get("sweep"),
         "error": values.get("error"),
         "usage": {
             **(values.get("usage") or {}),

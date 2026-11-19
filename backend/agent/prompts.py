@@ -156,6 +156,7 @@ def refine_system() -> str:
     return builder_system() + """
 # Changing an existing strategy
 You are now changing an approved strategy. Answer with a JSON Patch (RFC 6902; ops add, replace and remove only) against the current document that makes exactly the requested change and nothing else. Each op's value goes in value_json as a JSON string (use "" for remove). Paths are JSON Pointers such as /legs/0/stop_loss or /indicators/1/params/period. Summarize the change in one sentence in change_summary. The same rules on questions, assumptions and unsupported requests apply.
+When the trader picks values from a sweep ("go with EMA 9"), replace those numbers with the chosen ones and remove /sweep, so the next run is a single backtest. Keep the sweep only if they ask to test a range again.
 """
 
 

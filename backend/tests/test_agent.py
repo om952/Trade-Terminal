@@ -517,3 +517,118 @@ def test_stock_symbols_resolve_against_the_instrument_master(env):
     view = _start("EMA cross on Reliance")
     assert view["pending"]["document"]["instrument"]["symbol"] == "NSE_EQ|INE002A01018"
     assert "Unknown instrument" in env.calls[1]["messages"][-1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Sweeps through the builder (P2.2)
+# ---------------------------------------------------------------------------
+
+PERIOD = "/indicators/0/params/period"
+
+
+def _swept(values=(5, 9, 13)) -> dict:
+    doc = _document()
+    doc.pop("schema_version", None)
+    doc["indicators"][0]["params"]["period"] = values[0]
+    doc["sweep"] = [{"path": PERIOD, "values": list(values)}]
+    return doc
+
+
+def test_a_swept_strategy_runs_every_variant_and_names_no_winner(env):
+    env.script += [ready(_swept())]
+    view = _start()
+    assert view["phase"] == "awaiting_approval"
+    assert any(s["heading"] == "Sweep" for s in view["pending"]["card"]["sections"])
+    assert runs.list_runs() == [], "a sweep ran before approval"
+
+    view = _reply(view["id"], {"action": "approve"})
+    assert view["phase"] == "awaiting_followup", view
+    assert view["run"] is None
+    sweep = view["sweep"]
+    assert [r["assignment"][PERIOD] for r in sweep["variants"]] == [5, 9, 13]
+    assert sweep["axes"][0]["label"].endswith(".period")
+    assert sweep["synthetic_data"] is True and sweep["symbol"] == SYMBOL
+
+    recorded = runs.list_runs()
+    assert len(recorded) == 3
+    assert {r["strategy_id"] for r in recorded} == {view["strategy_id"]}
+    assert sweep["family_trials"]["runs"] == 3
+
+    kinds = [e["kind"] for e in view["transcript"]]
+    assert kinds == ["text", "approval", "saved", "sweep", "explanation"]
+    # The explanation is computed, not written by the model, and names no variant.
+    assert len(env.calls) == 1 and view["usage"]["steps"] == 0
+    explanation = view["transcript"][-1]
+    assert "3 variants" in explanation["text"] and "partly luck" in explanation["text"]
+    assert not any(r["label"] in explanation["text"] for r in sweep["variants"])
+    assert any("synthetic" in c for c in explanation["data"]["caveats"])
+
+
+def test_a_builder_sweep_equals_the_sweep_job(env):
+    from fastapi.testclient import TestClient
+
+    from backend.api.main import app
+    from backend.services.jobs import runner
+
+    env.script += [ready(_swept())]
+    via_agent = _reply(_start()["id"], {"action": "approve"})["sweep"]["variants"]
+
+    client = TestClient(app, base_url="http://127.0.0.1:8000")
+    job = client.post("/api/jobs/sweep", json={"strategy": _swept()}).json()
+    via_job = runner.wait(job["id"], timeout=120)["result"]["variants"]
+    assert [r["strategy_hash"] for r in via_agent] == [r["strategy_hash"] for r in via_job]
+    assert [r["metrics"] for r in via_agent] == [r["metrics"] for r in via_job]
+
+
+def test_a_builder_sweep_reports_progress_and_can_be_cancelled(env, monkeypatch):
+    import threading
+
+    from backend.services import jobs as job_module
+    from backend.services.jobs import runner
+
+    started, release = threading.Event(), threading.Event()
+    real = job_module.backtest_and_record
+
+    def slow(*args, **kwargs):
+        started.set()
+        release.wait(10)
+        return real(*args, **kwargs)
+
+    from backend.appstate import jobs as job_runner_module
+
+    monkeypatch.setattr(job_runner_module, "PROGRESS_INTERVAL_S", 0.0)   # every write lands
+    env.script += [ready(_swept())]
+    view = _start()
+    monkeypatch.setattr(job_module, "backtest_and_record", slow)
+    agent.reply(view["id"], {"action": "approve"})
+    assert started.wait(10)
+    working = agent.view(view["id"])
+    assert working["phase"] == "working"
+    assert working["job"]["message"].startswith("Variant 1 of 3"), working["job"]
+
+    runner.cancel(working["job"]["id"])
+    release.set()
+    view = _settle(view["id"])
+    assert view["job"]["status"] == "cancelled", view["job"]
+    assert view["phase"] == "interrupted"
+    assert "error" not in [e["kind"] for e in view["transcript"]], \
+        "a cancel is not reported as a failed sweep"
+    assert len(runs.list_runs()) == 1, "only the variant in flight was recorded"
+
+
+def test_picking_a_variant_after_a_sweep_runs_one_backtest(env):
+    env.script += [ready(_swept())]
+    view = _reply(_start()["id"], {"action": "approve"})
+    assert view["sweep"]
+
+    env.script += [patch(("replace", PERIOD, 9), ("remove", "/sweep", None),
+                         summary="Kept EMA 9 and dropped the sweep")]
+    view = _reply(view["id"], {"text": "Go with the 9 EMA"})
+    assert view["phase"] == "awaiting_approval"
+    assert "sweep" not in view["pending"]["document"] or not view["pending"]["document"]["sweep"]
+
+    env.script += [explain()]
+    view = _reply(view["id"], {"action": "approve"})
+    assert view["sweep"] is None and view["run"]["run_id"]
+    assert view["version"] == 2
+    assert len(runs.list_runs()) == 4
