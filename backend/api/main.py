@@ -39,6 +39,7 @@ from backend.data import instruments as inst
 from backend.data.store import all_coverage, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
+from backend.scan import service as scan_service
 from backend.services import backtest as backtest_service
 from backend.services import jobs as job_services
 from backend.services.backtest import (
@@ -171,6 +172,8 @@ def _service_errors():
     except ValidationError as exc:
         raise HTTPException(422, {"errors": format_validation_error(exc)}) from exc
     except backtest_service.InvalidStrategy as exc:
+        raise HTTPException(422, {"errors": exc.errors}) from exc
+    except scan_service.InvalidScan as exc:
         raise HTTPException(422, {"errors": exc.errors}) from exc
     except backtest_service.InvalidSymbol as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -561,6 +564,36 @@ def jobs_sweep(req: job_services.BacktestJob) -> dict:
         if not strategy.sweep:
             raise HTTPException(400, "This strategy has no sweep: add one to vary its parameters.")
         return job_runner.submit("sweep", req.model_dump(mode="json"))
+
+
+# ---------------------------------------------------------------------------
+# Scans (P3.1)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/scans/validate")
+def scans_validate(document: dict[str, Any]) -> dict:
+    """Check a scan spec, and say how many instruments it would cover."""
+    try:
+        spec = scan_service.validate(document)
+    except scan_service.InvalidScan as exc:
+        return {"valid": False, "errors": exc.errors}
+    try:
+        size: int | None = len(scan_service.resolve_universe(spec.universe))
+        problem = None
+    except ValueError as exc:
+        size, problem = None, str(exc)
+    return {"valid": problem is None, "hash": spec.content_hash(), "universe": size,
+            "errors": [] if problem is None else [{"field": "universe", "message": problem}],
+            "document": spec.model_dump(mode="json")}
+
+
+@app.post("/api/jobs/scan", status_code=202)
+def jobs_scan(req: scan_service.ScanParams) -> dict:
+    """Queue a scan. Poll GET /api/jobs/{id}; the result holds every instrument's row."""
+    with _service_errors():
+        spec = scan_service.validate(req.spec)      # reject a bad spec now, not later
+        scan_service.resolve_universe(spec.universe)
+        return job_runner.submit("scan", req.model_dump(mode="json"))
 
 
 @app.post("/api/jobs/fetch", status_code=202)

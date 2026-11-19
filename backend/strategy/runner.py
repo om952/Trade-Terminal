@@ -268,13 +268,21 @@ def _session_context(strategy: Strategy, df: pd.DataFrame) -> pd.DataFrame | Non
     Returns None when the strategy references none of them, so the common case
     costs nothing.
     """
+    referenced = set(strategy.entry.referenced_ids())
+    if strategy.exit:
+        referenced |= strategy.exit.referenced_ids()
+    return context_frame(referenced, df)
+
+
+def context_frame(referenced: set[str], df: pd.DataFrame) -> pd.DataFrame | None:
+    """Session context columns for a set of referenced names, or None if none are used.
+
+    Shared by backtests and scans, so `prev_day_high` means one thing everywhere.
+    """
     from backend.indicators import pivots as piv
     from backend.indicators.volume import vwap
     from backend.strategy.schema import CONTEXT_FIELDS
 
-    referenced = set(strategy.entry.referenced_ids())
-    if strategy.exit:
-        referenced |= strategy.exit.referenced_ids()
     if not (referenced & CONTEXT_FIELDS):
         return None
 
