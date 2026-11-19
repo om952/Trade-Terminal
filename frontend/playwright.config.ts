@@ -23,6 +23,7 @@ export default defineConfig({
   testDir: "e2e",
   timeout: 120_000,
   retries: 0,
+  workers: 1,       // the specs share one data directory and one API server
   use: { baseURL: external ?? `http://127.0.0.1:${UI_PORT}`, trace: "retain-on-failure" },
   webServer: external ? undefined : [
     {

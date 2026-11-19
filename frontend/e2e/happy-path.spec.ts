@@ -6,6 +6,9 @@ test("describe, approve, backtest, open the report, paper trade, find it in the 
     data: { profile: "NIFTY", timeframe: "15m", days: 300, seed: 7 },
   });
   expect(seeded.ok()).toBeTruthy();
+  // Other specs share this data directory, so count runs from here.
+  const runs = async () => (await (await page.request.get("/api/runs?limit=500")).json()).runs.length;
+  const runsAtStart = await runs();
 
   await page.goto("/");
   await expect(page.getByText("Strategy assistant")).toBeVisible();
@@ -19,8 +22,7 @@ test("describe, approve, backtest, open the report, paper trade, find it in the 
   // The read-back is the approval gate; nothing has run yet.
   await expect(page.getByText(/Check before anything runs/)).toBeVisible();
   await expect(page.getByText("15-minute bars", { exact: true })).toBeVisible();
-  const runsBefore = await (await page.request.get("/api/runs")).json();
-  expect(runsBefore.runs).toHaveLength(0);
+  expect(await runs()).toBe(runsAtStart);
 
   await page.getByRole("button", { name: "Approve and backtest" }).click();
   await expect(page.getByRole("button", { name: "Open full report" })).toBeVisible({ timeout: 60_000 });

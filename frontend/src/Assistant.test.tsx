@@ -100,6 +100,36 @@ describe("Assistant", () => {
     expect(JSON.parse(reply.init!.body as string)).toEqual({ action: "approve" });
   });
 
+  it("says how many backtests approving a sweep runs, and shows the grid", async () => {
+    const pending = {
+      type: "approval" as const,
+      card: { title: "EMA cross", summary: "", sections: [{ heading: "Sweep", lines: ["ema_fast.period: 5, 9, 13"] }] },
+      assumptions: [],
+      document: { name: "EMA cross", sweep: [{ path: "/indicators/0/params/period", values: [5, 9, 13] }] },
+    };
+    await openConversation(conversation({ pending }));
+    expect(await screen.findByText("Approve and run 3 backtests")).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    const sweep = {
+      family: "f", family_trials: { runs: 3, variants: 3 },
+      axes: [{ path: "/indicators/0/params/period", label: "ema_fast.period", values: [5, 9] }],
+      symbol: "SIM|AGENT", timeframe: "15m", synthetic_data: false, data: null, skipped: [],
+      note: "Every variant is recorded as a trial.",
+      variants: [5, 9].map((p) => ({
+        label: `ema_fast.period=${p}`, assignment: { "/indicators/0/params/period": p }, run_id: `r${p}`,
+        strategy_hash: "h", metrics: { ...metrics, profit_factor: 1 },
+      })),
+    };
+    await openConversation(conversation({
+      phase: "awaiting_followup",
+      transcript: [{ role: "system", kind: "sweep", text: "", data: { sweep } }],
+    }));
+    expect(await screen.findByText(/Sweep · SIM\|AGENT 15m · 2 variants/)).toBeTruthy();
+    expect(screen.getAllByText("Report")).toHaveLength(2);
+  });
+
   it("sends a change request instead of approving", async () => {
     const pending = {
       type: "approval" as const,

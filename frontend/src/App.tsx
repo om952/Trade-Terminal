@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError } from "./api";
-import type { BacktestResult, Dataset, IndicatorMeta, RunSummary, Status, TemplateMeta, ValidationResult } from "./api";
+import { api, ApiError, TERMINAL_JOB } from "./api";
+import type {
+  BacktestResult, Dataset, IndicatorMeta, Job, RunSummary, Status, SweepResult, TemplateMeta, ValidationResult,
+} from "./api";
 import { Assistant } from "./Assistant";
 import { Builder, type RunConfig } from "./Builder";
 import { Library } from "./Library";
 import { ChartTab, PerformanceTab, TradeLogTab } from "./Results";
 import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./Live";
+import { SweepTable, sweepCount } from "./Sweep";
 
 const BLANK_STRATEGY = {
   name: "New Strategy",
@@ -22,7 +25,9 @@ const BLANK_STRATEGY = {
   risk: { max_concurrent_positions: 1 },
 };
 
-type Tab = "chart" | "performance" | "trades" | "live";
+type Tab = "chart" | "performance" | "trades" | "sweep" | "live";
+
+const SWEEP_POLL_MS = 1000;
 type Panel = "assistant" | "builder" | "library";
 
 export default function App() {
@@ -53,6 +58,9 @@ export default function App() {
   const [strategyId, setStrategyId] = useState<string | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(0);
+  const [sweepJob, setSweepJob] = useState<Job<SweepResult> | null>(null);
+  const [sweep, setSweep] = useState<SweepResult | null>(null);
+  const sweeping = sweepJob != null && !TERMINAL_JOB.includes(sweepJob.status);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -113,7 +121,49 @@ export default function App() {
     }));
   }, [runConfig, doc.instrument?.symbol]);
 
+  // Poll a running sweep. The grid runs server-side as a job, so closing the
+  // tab does not stop it; the recorded runs stay in the library either way.
+  useEffect(() => {
+    if (!sweepJob || TERMINAL_JOB.includes(sweepJob.status)) return;
+    const timer = setTimeout(async () => {
+      try {
+        const next = await api.job<SweepResult>(sweepJob.id);
+        setSweepJob(next);
+        if (next.status === "succeeded" && next.result) setSweep(next.result);
+        if (next.status === "failed") setError(`Sweep failed: ${next.error}`);
+      } catch (e) {
+        setError((e as ApiError).message);
+      }
+    }, SWEEP_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [sweepJob]);
+
+  const runSweep = async () => {
+    setError(null);
+    setSweep(null);
+    try {
+      setSweepJob(await api.sweep({
+        strategy: doc,
+        strategy_id: strategyId ?? undefined,
+        symbol: runConfig.symbol || undefined,
+        starting_capital: runConfig.starting_capital,
+        lot_size: runConfig.lot_size,
+        slippage_bps: runConfig.slippage_bps,
+        max_leverage: runConfig.max_leverage,
+      }));
+      setTab("sweep");
+    } catch (e) {
+      setError((e as ApiError).message || "Sweep did not start");
+    }
+  };
+
+  const cancelSweep = async () => {
+    if (!sweepJob) return;
+    try { setSweepJob(await api.cancelJob(sweepJob.id) as Job<SweepResult>); } catch { /* finished meanwhile */ }
+  };
+
   const run = async () => {
+    if (sweepCount(doc) > 0) return runSweep();
     setRunning(true);
     setError(null);
     try {
@@ -137,13 +187,17 @@ export default function App() {
     }
   };
 
-  const openRun = async (runId: string) => {
+  // Opening a run shows its report. A sweep variant's report keeps the swept
+  // document in the builder unless the trader chooses to use that variant.
+  const openRun = async (runId: string, opts: { keepDocument?: boolean } = {}) => {
     setError(null);
     try {
       const run = await api.run(runId);
       setResult(run.result);
-      setDoc(run.document);
-      setStrategyId(run.strategy_id);
+      if (!opts.keepDocument) {
+        setDoc(run.document);
+        setStrategyId(run.strategy_id);
+      }
       setTab("performance");
     } catch (e) {
       setError((e as ApiError).message);
@@ -261,7 +315,8 @@ export default function App() {
             datasets={datasets}
             validation={validation}
             onRun={run}
-            running={running}
+            running={running || sweeping}
+            runningLabel={sweeping ? sweepJob?.message || "Starting the sweep…" : undefined}
             runConfig={runConfig}
             setRunConfig={setRunConfig}
             onRefreshDatasets={loadDatasets}
@@ -283,12 +338,14 @@ export default function App() {
 
         <main className="content">
           <nav className="tabs">
-            {(["chart", "performance", "trades", "live"] as Tab[]).map((t) => (
+            {(["chart", "performance", "trades", "sweep", "live"] as Tab[])
+              .filter((t) => t !== "sweep" || sweepJob || sweep)
+              .map((t) => (
               <button
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={t !== "live" && (!result || (t === "chart" && !result.chart))}
+                disabled={t !== "live" && t !== "sweep" && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -296,7 +353,9 @@ export default function App() {
                     ? "Performance"
                     : t === "trades"
                       ? `Trade Log${result ? ` (${result.trades.length})` : ""}`
-                      : "Live"}
+                      : t === "sweep"
+                        ? `Sweep${sweep ? ` (${sweep.variants.length})` : ""}`
+                        : "Live"}
               </button>
             ))}
             {result && (
@@ -330,7 +389,29 @@ export default function App() {
 
             {tab === "live" && <LiveDashboard sessionId={sessionId} onPick={setSessionId} />}
 
-            {tab !== "live" && !result && !error && (
+            {tab === "sweep" && sweepJob && sweeping && (
+              <div className="panel" role="status">
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <span><span className="spinner" /> {sweepJob.message || "Starting the sweep…"}</span>
+                  <button className="btn secondary tiny" onClick={cancelSweep}>Cancel</button>
+                </div>
+                <div className="progress"><div style={{ width: `${Math.round(sweepJob.progress * 100)}%` }} /></div>
+              </div>
+            )}
+            {tab === "sweep" && sweepJob?.status === "cancelled" && (
+              <div className="notice warn">
+                Sweep cancelled. The variants that finished are recorded and listed in the library.
+              </div>
+            )}
+            {tab === "sweep" && sweep && (
+              <SweepTable
+                sweep={sweep}
+                onOpenRun={(id) => openRun(id, { keepDocument: true })}
+                onUseRun={(id) => { openRun(id); setPanel("builder"); }}
+              />
+            )}
+
+            {tab !== "live" && tab !== "sweep" && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
                 <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>
