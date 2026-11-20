@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ScanResults } from "./Screener";
+import { HistoryPrefetch, ScanResults } from "./Screener";
 import type { Job, ScanResult } from "./api";
 
 afterEach(cleanup);
@@ -56,5 +56,57 @@ describe("ScanResults", () => {
     expect(screen.getByText("12 of 30: TCS")).toBeTruthy();
     fireEvent.click(screen.getByText("Cancel"));
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe("HistoryPrefetch", () => {
+  const plan = {
+    timeframe: "1d", start: "2021-11-19", end: "2026-11-19", instruments: 3, to_download: 2, up_to_date: 1,
+    skipped: 0, missing_sessions: 2480, calls: 3000, eta_seconds: 1800, binding_limit: "1900 requests per 30 min",
+    broker_ready: false, broker_reason: "no access token", rows: [],
+  };
+
+  function stub(routes: Record<string, (init?: RequestInit) => unknown>) {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const key = `${init?.method ?? "GET"} ${url}`;
+      calls.push(key);
+      const route = Object.keys(routes).find((k) => key.startsWith(k));
+      return new Response(JSON.stringify(route ? routes[route](init) : { detail: "unmocked" }), { status: route ? 200 : 500 });
+    }));
+    return calls;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows what is missing, the requests and the time, and refuses without a broker", async () => {
+    stub({ "POST /api/data/prefetch/plan": () => plan });
+    render(<HistoryPrefetch universe={{ symbols: ["A", "B", "C"] }} enabled />);
+    fireEvent.click(screen.getByText("Check history"));
+    const status = await screen.findByLabelText("History plan");
+    expect(status.textContent).toContain("1 of 3 up to date");
+    expect(status.textContent).toContain("2,480 sessions in 3,000 requests, about 30 min (Upstox allows 1900 requests per 30 min)");
+    expect(status.textContent).toContain("Upstox is not connected: no access token");
+    expect((screen.getByText("Download") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("downloads with progress, and offers to resume once stopped", async () => {
+    const job = (status: string, extra = {}) => ({ id: "j1", kind: "prefetch", status, progress: 0.4,
+      message: "2 of 3: B · 1200/3000 requests · about 18 min left", result: null, error: null, ...extra });
+    const calls = stub({
+      "POST /api/data/prefetch/plan": () => ({ ...plan, broker_ready: true, broker_reason: null }),
+      "POST /api/jobs/prefetch": () => job("running"),
+      "GET /api/jobs/j1": () => job("cancelled", { error: "Cancelled" }),
+      "POST /api/jobs/j1/resume": () => ({ ...job("running"), id: "j2" }),
+      "GET /api/jobs/j2": () => job("running", { id: "j2" }),
+    });
+    render(<HistoryPrefetch universe={{ preset: "fno_stocks" }} enabled />);
+    fireEvent.click(screen.getByText("Check history"));
+    fireEvent.click(await screen.findByText("Download"));
+    expect(await screen.findByText(/1200\/3000 requests · about 18 min left/)).toBeTruthy();
+    expect(await screen.findByText(/Resuming skips what is already stored/, {}, { timeout: 3000 })).toBeTruthy();
+    fireEvent.click(await screen.findByText("Resume download"));
+    await screen.findByText(/1200\/3000 requests/);
+    expect(calls).toContain("POST /api/jobs/j1/resume");
   });
 });

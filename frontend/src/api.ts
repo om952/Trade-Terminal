@@ -561,6 +561,31 @@ export interface ScanCheckResult {
   message?: string;
 }
 
+export interface PrefetchPlan {
+  timeframe: string;
+  start: string;
+  end: string;
+  instruments: number;
+  to_download: number;
+  up_to_date: number;
+  skipped: number;
+  missing_sessions: number;
+  calls: number;
+  eta_seconds: number;
+  binding_limit: string | null;
+  broker_ready: boolean;
+  broker_reason: string | null;
+  rows: { key: string; symbol: string; calls?: number; missing_sessions?: number; skip?: string }[];
+}
+
+export interface PrefetchResult {
+  instruments: number;
+  sessions_fetched: number;
+  sessions_failed: number;
+  errors: { key: string; symbol: string; error: string }[];
+  elapsed_seconds: number;
+}
+
 export interface BuilderBacktestSettings {
   start?: string;
   end?: string;
@@ -680,6 +705,15 @@ export const api = {
 
   checkScan: (id: string) =>
     request<Job<ScanCheckResult>>(`/api/scans/${encodeURIComponent(id)}/check`, { method: "POST" }),
+
+  prefetchPlan: (universe: unknown, timeframe: "1d" | "1m" = "1d") =>
+    request<PrefetchPlan>("/api/data/prefetch/plan", { method: "POST", body: JSON.stringify({ universe, timeframe }) }),
+
+  prefetch: (universe: unknown, timeframe: "1d" | "1m" = "1d") =>
+    request<Job<PrefetchResult>>("/api/jobs/prefetch", { method: "POST", body: JSON.stringify({ universe, timeframe }) }),
+
+  resumeJob: <R = unknown>(id: string) =>
+    request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}/resume`, { method: "POST" }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

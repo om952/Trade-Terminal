@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, TERMINAL_JOB } from "./api";
 import type {
-  IndicatorMeta, Job, ReturnStats, SavedScan, SavedScanDetail, ScanCheckResult, ScanResult, ScanRow, ScanStatus,
+  IndicatorMeta, Job, PrefetchPlan, PrefetchResult, ReturnStats, SavedScan, SavedScanDetail, ScanCheckResult, ScanResult, ScanRow, ScanStatus,
   ScanValidation,
 } from "./api";
 import { ConditionPanel, IndicatorPanel, PRICE_FIELDS } from "./Builder";
@@ -154,6 +154,7 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedI
             ? "Stocks with NSE futures, from today's instrument master. Past results miss stocks that left the list."
             : "Trading symbols or instrument keys, separated by commas."}
         </div>
+        <HistoryPrefetch universe={spec.universe} enabled={Boolean(check?.universe)} />
       </div>
 
       <IndicatorPanel doc={spec} setDoc={setSpec} catalogue={catalogue} />
@@ -194,6 +195,77 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedI
         </button>
       </div>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function duration(seconds: number) {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 90 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** Daily history for the universe: what is missing, and a resumable download within the rate limits. */
+export function HistoryPrefetch({ universe, enabled }: { universe: unknown; enabled: boolean }) {
+  const [plan, setPlan] = useState<PrefetchPlan | null>(null);
+  const [job, setJob] = useState<Job<PrefetchResult> | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useJobPoll(job, setJob, setProblem);
+  const running = job != null && !TERMINAL_JOB.includes(job.status);
+  const stopped = job != null && ["cancelled", "interrupted", "failed"].includes(job.status);
+
+  const check = async () => {
+    setProblem(null);
+    try { setPlan(await api.prefetchPlan(universe)); } catch (e) { setProblem((e as ApiError).message); }
+  };
+  useEffect(() => { setPlan(null); }, [JSON.stringify(universe)]);
+  useEffect(() => { if (job && TERMINAL_JOB.includes(job.status)) check(); }, [job?.status]);
+
+  const start = async () => {
+    setProblem(null);
+    try {
+      setJob(stopped ? await api.resumeJob<PrefetchResult>(job!.id) : await api.prefetch(universe));
+    } catch (e) { setProblem((e as ApiError).message); }
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="row" style={{ gap: 6, alignItems: "center" }}>
+        <button className="btn secondary tiny" style={{ flex: "0 0 auto" }} disabled={!enabled || running} onClick={check}>
+          Check history
+        </button>
+        {plan && plan.calls > 0 && (
+          <button className="btn tiny" style={{ flex: "0 0 auto" }} disabled={!plan.broker_ready || running} onClick={start}>
+            {stopped ? "Resume download" : "Download"}
+          </button>
+        )}
+        {running && <button className="btn secondary tiny" style={{ flex: "0 0 auto" }}
+          onClick={async () => { try { setJob(await api.cancelJob(job!.id) as Job<PrefetchResult>); } catch { /* finished */ } }}>Cancel</button>}
+      </div>
+      {plan && (
+        <div className="hint" role="status" aria-label="History plan">
+          Daily bars {plan.start} to {plan.end}: {plan.up_to_date} of {plan.instruments} up to date
+          {plan.skipped ? `, ${plan.skipped} not downloadable` : ""}.
+          {plan.calls > 0 && <> {plan.to_download} need {plan.missing_sessions.toLocaleString()} sessions in {plan.calls.toLocaleString()} request{plan.calls === 1 ? "" : "s"}, about {duration(plan.eta_seconds)}{plan.binding_limit ? ` (Upstox allows ${plan.binding_limit})` : ""}.</>}
+          {plan.calls > 0 && !plan.broker_ready && <> Upstox is not connected: {plan.broker_reason}</>}
+        </div>
+      )}
+      {running && (
+        <div role="status">
+          <div className="hint">{job.message || "Starting the download…"}</div>
+          <div className="progress"><div style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>
+        </div>
+      )}
+      {stopped && <div className="hint">Download stopped{job.error ? `: ${job.error}` : ""}. Resuming skips what is already stored.</div>}
+      {job?.status === "succeeded" && job.result && (
+        <div className="hint">
+          Downloaded {job.result.sessions_fetched.toLocaleString()} sessions in {duration(job.result.elapsed_seconds)}
+          {job.result.errors.length ? `; ${job.result.errors.length} failed: ${job.result.errors.map((e) => e.symbol).join(", ")}` : ""}.
+        </div>
+      )}
+      {problem && <div className="hint neg">{problem}</div>}
+    </div>
   );
 }
 

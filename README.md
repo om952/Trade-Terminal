@@ -279,6 +279,12 @@ Each check reports only the stocks that started or stopped meeting the
 condition, to Telegram if `TELEGRAM_CHAT_ID` and the bot token are set, and
 in the Screener's Saved scans panel either way.
 
+To download history for a whole universe first, `POST /api/data/prefetch/plan`
+shows what is missing and how long Upstox's rate limits make it take, and
+`POST /api/jobs/prefetch` runs it (resume a stopped one with
+`POST /api/jobs/{id}/resume`; stored sessions are skipped). The Screener's
+universe panel has the same as Check history and Download.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash

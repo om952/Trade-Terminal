@@ -679,6 +679,53 @@ def jobs_scan(req: scan_service.ScanParams) -> dict:
         return job_runner.submit("scan", req.model_dump(mode="json"))
 
 
+class PrefetchRequest(BaseModel):
+    universe: dict[str, Any]
+    timeframe: Literal["1d", "1m"] = "1d"
+    start: date | None = None
+    end: date | None = None
+
+
+def _prefetch_params(req: PrefetchRequest):
+    from backend.data import prefetch
+
+    return prefetch.PrefetchParams.model_validate(req.model_dump())
+
+
+@app.post("/api/data/prefetch/plan")
+def prefetch_plan(req: PrefetchRequest) -> dict:
+    """What downloading this universe's history would take: sessions, requests, time."""
+    from backend.data import prefetch
+
+    with _service_errors():
+        out = prefetch.plan(_prefetch_params(req))
+    ready, reason = cache.broker_ready()
+    return {**out, "broker_ready": ready, "broker_reason": None if ready else reason}
+
+
+@app.post("/api/jobs/prefetch", status_code=202)
+def jobs_prefetch(req: PrefetchRequest) -> dict:
+    """Download a universe's missing history, within the rate limits. Resumable."""
+    with _service_errors():
+        params = _prefetch_params(req)
+        ready, reason = cache.broker_ready()
+        if not ready:
+            raise HTTPException(400, f"Upstox is not connected: {reason}")
+        return job_runner.submit("prefetch", params.model_dump(mode="json"))
+
+
+@app.post("/api/jobs/{job_id}/resume", status_code=202)
+def jobs_resume(job_id: str) -> dict:
+    """Run a stopped download again; what is already stored is skipped."""
+    with _service_errors():
+        job = job_runner.get(job_id)
+        if job["kind"] not in job_services.RESUMABLE:
+            raise HTTPException(400, f"A {job['kind']} job cannot be resumed.")
+        if job["status"] not in ("interrupted", "cancelled", "failed"):
+            raise HTTPException(409, f"The job is {job['status']}; only a stopped job can be resumed.")
+        return job_runner.submit(job["kind"], job["params"])
+
+
 @app.post("/api/jobs/fetch", status_code=202)
 def jobs_fetch(req: job_services.FetchJob) -> dict:
     """Queue a download into the cache, with progress."""
