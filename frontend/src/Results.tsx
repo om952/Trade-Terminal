@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createChart, ColorType, type IChartApi } from "lightweight-charts";
-import type { BacktestResult, Metrics, Trade } from "./api";
+import type { BacktestResult, Deflated, Metrics, Trade } from "./api";
 
 const fmt = (n: number, digits = 2) =>
   Number.isFinite(n) ? n.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -155,6 +155,31 @@ export function ChartTab({ result }: { result: BacktestResult }) {
 /* Performance                                                         */
 /* ================================================================== */
 
+/** Whether the Sharpe ratio survives the number of distinct tests of this idea. */
+export function LuckPanel({ d }: { d: Deflated }) {
+  const pct = (x: number | null) => (x == null ? "–" : `${Math.round(x * 100)}%`);
+  const tone = d.dsr == null ? "neutral" : d.dsr >= d.threshold ? "good" : "bad";
+  return (
+    <div className="panel" style={{ marginTop: 12 }} aria-label="Is it luck?">
+      <div className="panel-title">
+        <span>Is it luck?</span>
+        <span className={tone === "good" ? "pos" : tone === "bad" ? "neg" : "hint"}>{d.verdict}</span>
+      </div>
+      <div className="metric-grid">
+        <Cell label="Sharpe" value={d.sharpe == null ? "–" : d.sharpe.toFixed(2)} sub={`from ${d.days} daily returns`} tone="neutral" />
+        <Cell label="Above zero" value={pct(d.psr)} sub="chance the true Sharpe is positive" tone="neutral" />
+        <Cell label={`Best of ${d.trials} by chance`} value={d.benchmark_sharpe == null ? "–" : d.benchmark_sharpe.toFixed(2)}
+          sub="Sharpe that many worthless tries would reach" tone="neutral" />
+        <Cell label="Deflated Sharpe" value={pct(d.dsr)} sub={`chance it beats that; ${Math.round(d.threshold * 100)}% is the bar`} tone={tone} />
+      </div>
+      <div className="hint">
+        Every distinct test of this idea (a retuned number, another instrument or period) counts as a try.
+        The more tries, the higher the bar.
+      </div>
+    </div>
+  );
+}
+
 export function PerformanceTab({ result }: { result: BacktestResult }) {
   const equityRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -246,6 +271,8 @@ export function PerformanceTab({ result }: { result: BacktestResult }) {
       ))}
 
       <MetricGrid m={m} />
+
+      {result.deflated && <LuckPanel d={result.deflated} />}
 
       <div className="panel" style={{ marginTop: 12 }}>
         <div className="panel-title">Where the money went</div>

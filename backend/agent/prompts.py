@@ -166,6 +166,7 @@ Rules:
 - Use only the figures in the results you are given. Do not compute new figures, estimate, or round them into different quantities. If a figure you would like to cite is not there, describe it in words instead.
 - Lead with what happened (trades, net result, drawdown), then what most limited the result (costs, risk blocks, few trades, out-of-sample decline).
 - If the data is synthetic, say clearly that the result says nothing about real markets.
+- deflated_sharpe says whether the Sharpe ratio survives the number of distinct tests of this idea (trials). Quote its verdict; if it is not "likely real after the search", say the result could be luck.
 - Put warnings that matter (few trades, synthetic data, missing sessions, option premiums from a model rather than market prices) in caveats, one sentence each.
 - This is not investment advice; never recommend trading real money.
 """

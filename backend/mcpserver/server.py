@@ -112,7 +112,8 @@ def _compact_job(job: dict[str, Any]) -> dict[str, Any]:
             "run_id": result.get("run_id"), "trials_of_this_exact_strategy": result.get("trials"),
             "metrics": {k: (result.get("metrics") or {}).get(k) for k in (
                 "net_pnl", "total_return_pct", "max_drawdown_pct", "sharpe", "win_rate_pct", "total_trades")},
-            "warnings": result.get("warnings"), "next": "Call get_report with this run_id.",
+            "warnings": result.get("warnings"), "deflated_sharpe": result.get("deflated"),
+            "next": "Call get_report with this run_id.",
         }
     elif job.get("kind") == "scan":
         rows = result.get("rows") or []

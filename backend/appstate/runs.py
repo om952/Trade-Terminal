@@ -138,6 +138,22 @@ def family_trials(family: str) -> dict[str, int]:
     return {"runs": row[0], "variants": row[1]}
 
 
+def family_experiments(family: str) -> list[float | None]:
+    """Annualized Sharpe of each distinct experiment in a family, latest run of each.
+
+    An experiment is a (strategy version, data set) pair: rerunning the identical
+    test adds nothing, but a retuned number or another instrument or period is a
+    new try. Its count is the N the deflated Sharpe ratio corrects for.
+    """
+    rows = connection().execute(
+        """SELECT json_extract(metrics, '$.sharpe') AS sharpe, max(created_at)
+           FROM runs WHERE family = ?
+           GROUP BY strategy_hash, json_extract(data, '$.fingerprint')""",
+        [family],
+    ).fetchall()
+    return [r["sharpe"] for r in rows]
+
+
 def families(limit: int = 50) -> list[dict[str, Any]]:
     """Families by recent activity, with their trial counts and best Sharpe so far."""
     rows = connection().execute(

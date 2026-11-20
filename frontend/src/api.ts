@@ -136,6 +136,7 @@ export interface BacktestResult {
   trials?: number;
   family?: string;
   family_trials?: { runs: number; variants: number };
+  deflated?: Deflated;
   warnings: string[];
   metrics: Metrics;
   split: {
@@ -317,6 +318,19 @@ export interface RunSummary {
   trials: number;
   family?: string;
   family_trials?: { runs: number; variants: number };
+  deflated?: Deflated;
+}
+
+/** A Sharpe ratio deflated by the number of distinct tests of the idea (backend/analytics/validation.py). */
+export interface Deflated {
+  sharpe: number | null;
+  days: number;
+  trials: number;
+  psr: number | null;
+  benchmark_sharpe: number | null;
+  dsr: number | null;
+  threshold: number;
+  verdict: string;
 }
 
 export interface DataInfo {

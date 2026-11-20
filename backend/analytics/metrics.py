@@ -8,9 +8,20 @@ alone tells you almost nothing. A strategy that makes 30% while spending 200
 days underwater is not the same product as one that makes 25% smoothly, and a
 metrics panel that shows only the first number is marketing, not analysis.
 
-**Annualize honestly.** Sharpe scales with the square root of periods per year,
-and getting `periods_per_year` wrong on intraday data inflates it by ~9x on
-5-minute bars. The caller must state the bar frequency; there is no silent default.
+**Annualize honestly.** Sharpe, Sortino and volatility are computed from the
+equity curve's *daily* returns (the close of each session against the one
+before, the first against the starting capital) and scaled by sqrt(252),
+whatever the bar size. Per-bar returns annualized by bars per year assume
+5-minute returns are independent, which overnight gaps and intraday patterns
+break, and they make the same strategy's Sharpe depend on the chart it ran on.
+
+**No risk-free rate.** The backtest does not credit interest on idle cash, so
+Sharpe does not charge for it either. Subtracting 6.5% a year from a strategy
+that is in the market 10% of the time divided its near-zero volatility into
+Sharpe values like -54: arithmetically right, and meaningless.
+
+The daily returns' count, skew and kurtosis are kept with the metrics: the
+deflated Sharpe ratio (backend/analytics/validation.py) needs all three.
 """
 
 from __future__ import annotations
@@ -26,7 +37,7 @@ import pandas as pd
 from backend.strategy.state import ClosedTrade
 
 TRADING_DAYS = 252
-RISK_FREE_RATE = 0.065  # India 10y-ish; used for Sharpe/Sortino
+RISK_FREE_RATE = 0.0  # see the module docstring: idle cash earns nothing in the backtest
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +69,11 @@ class Metrics:
     sortino: float = 0.0
     calmar: float = 0.0
     volatility_pct: float = 0.0
+    # The daily returns Sharpe is computed from, summarized for the deflated
+    # Sharpe ratio: how many, and their skew and (Pearson) kurtosis.
+    return_days: int = 0
+    return_skew: float = 0.0
+    return_kurtosis: float = 3.0
     max_drawdown_pct: float = 0.0
     max_drawdown_value: float = 0.0
     max_drawdown_days: int = 0
@@ -134,6 +150,17 @@ def bars_per_year(timeframe: str) -> int:
     minutes_per_session = 375
     per_bar = tf.interval * (60 if tf.unit == "hours" else 1)
     return max(1, TRADING_DAYS * (minutes_per_session // per_bar))
+
+
+def daily_returns(equity: pd.Series, starting_capital: float) -> pd.Series:
+    """Session-close to session-close returns; the first session is measured from the start."""
+    if equity.empty:
+        return pd.Series(dtype="float64")
+    closes = equity.groupby(equity.index.date).last()
+    base = pd.concat([pd.Series([starting_capital]), closes.reset_index(drop=True)], ignore_index=True)
+    returns = base.pct_change().iloc[1:]
+    returns.index = closes.index
+    return returns.replace([np.inf, -np.inf], np.nan).dropna()
 
 
 def compute_drawdown(equity: pd.Series) -> DrawdownInfo:
@@ -298,21 +325,22 @@ def compute_metrics(
         _fill_trade_stats(metrics, trades, equity)
         return metrics
 
-    # --- risk-adjusted -----------------------------------------------------
-    periods = bars_per_year(timeframe)
-    returns = equity.pct_change().dropna()
-
+    # --- risk-adjusted, from daily returns (see the module docstring) -------
+    returns = daily_returns(equity, start)
+    metrics.return_days = len(returns)
     if len(returns) > 1 and returns.std(ddof=1) > 0:
         mean_r, std_r = returns.mean(), returns.std(ddof=1)
-        rf_per_bar = risk_free_rate / periods
-        metrics.volatility_pct = float(std_r * math.sqrt(periods) * 100.0)
-        metrics.sharpe = float((mean_r - rf_per_bar) / std_r * math.sqrt(periods))
+        rf_per_day = risk_free_rate / TRADING_DAYS
+        metrics.volatility_pct = float(std_r * math.sqrt(TRADING_DAYS) * 100.0)
+        metrics.sharpe = float((mean_r - rf_per_day) / std_r * math.sqrt(TRADING_DAYS))
+        metrics.return_skew = float(returns.skew()) if len(returns) > 2 else 0.0
+        metrics.return_kurtosis = float(returns.kurt()) + 3.0 if len(returns) > 3 else 3.0
 
-        downside = returns[returns < 0]
-        if len(downside) > 1 and downside.std(ddof=1) > 0:
-            metrics.sortino = float(
-                (mean_r - rf_per_bar) / downside.std(ddof=1) * math.sqrt(periods)
-            )
+        # Downside deviation: the root mean square of the shortfalls below zero,
+        # over every day (a day with no loss contributes zero, not nothing).
+        downside = math.sqrt(float((returns.clip(upper=0.0) ** 2).mean()))
+        if downside > 0:
+            metrics.sortino = float((mean_r - rf_per_day) / downside * math.sqrt(TRADING_DAYS))
 
     # --- drawdown ---------------------------------------------------------
     dd = compute_drawdown(equity)
