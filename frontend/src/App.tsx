@@ -12,6 +12,8 @@ import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./
 import { SweepTable, sweepCount } from "./Sweep";
 import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
 import { ValidationView, type RobustnessResult, type ValidateOptions } from "./Validation";
+import { ResearchPanel, ResearchView, openSaved } from "./Research";
+import type { ResearchSession } from "./api";
 
 const BLANK_STRATEGY = {
   name: "New Strategy",
@@ -28,10 +30,10 @@ const BLANK_STRATEGY = {
   risk: { max_concurrent_positions: 1 },
 };
 
-type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "validation" | "live";
+type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "validation" | "research" | "live";
 
 const SWEEP_POLL_MS = 1000;
-type Panel = "assistant" | "builder" | "screener" | "library";
+type Panel = "assistant" | "builder" | "screener" | "research" | "library";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -126,6 +128,21 @@ export default function App() {
     } catch (e) {
       setError((e as ApiError).message || "Checks did not start");
     }
+  };
+
+  // Research runs (backend/research). Polled while a turn is working.
+  const [research, setResearch] = useState<ResearchSession | null>(null);
+  useEffect(() => {
+    if (!research || research.phase !== "working") return;
+    const timer = setTimeout(async () => {
+      try { setResearch(await api.research(research.id)); } catch (e) { setError((e as ApiError).message); }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [research]);
+
+  const showResearch = (s: ResearchSession | null) => {
+    setResearch(s);
+    if (s) setTab("research");
   };
 
   const runScan = async (mode: "now" | "history", override?: Record<string, any>) => {
@@ -362,10 +379,11 @@ export default function App() {
       <div className="main">
         <aside className="sidebar">
           <div className="seg-control" role="tablist">
-            {(["assistant", "builder", "screener", "library"] as Panel[]).map((p) => (
+            {(["assistant", "builder", "screener", "research", "library"] as Panel[]).map((p) => (
               <button key={p} role="tab" aria-selected={panel === p}
                 className={panel === p ? "active" : ""} onClick={() => setPanel(p)}>
-                {p === "assistant" ? "Assistant" : p === "builder" ? "Builder" : p === "screener" ? "Screener" : "Library"}
+                {p === "assistant" ? "Assistant" : p === "builder" ? "Builder" : p === "screener" ? "Screener"
+                  : p === "research" ? "Research" : "Library"}
               </button>
             ))}
           </div>
@@ -375,6 +393,12 @@ export default function App() {
           )}
 
           {panel === "library" && <Library onOpenDocument={openDocument} onOpenRun={openRun} />}
+
+          {panel === "research" && (
+            <ResearchPanel doc={doc} sessionId={research?.id ?? null} onSession={showResearch}
+              settings={{ symbol: runConfig.symbol, starting_capital: runConfig.starting_capital,
+                lot_size: runConfig.lot_size, slippage_bps: runConfig.slippage_bps }} />
+          )}
 
           {panel === "screener" && (
             <ScreenerPanel spec={scanSpec} setSpec={setScanSpec} catalogue={indicators}
@@ -419,14 +443,15 @@ export default function App() {
 
         <main className="content">
           <nav className="tabs">
-            {(["chart", "performance", "trades", "sweep", "scan", "validation", "live"] as Tab[])
-              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob) && (t !== "validation" || validateJob))
+            {(["chart", "performance", "trades", "sweep", "scan", "validation", "research", "live"] as Tab[])
+              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob)
+                && (t !== "validation" || validateJob) && (t !== "research" || research))
               .map((t) => (
               <button
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={!["live", "sweep", "scan", "validation"].includes(t) && (!result || (t === "chart" && !result.chart))}
+                disabled={!["live", "sweep", "scan", "validation", "research"].includes(t) && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -440,7 +465,9 @@ export default function App() {
                           ? "Scan"
                           : t === "validation"
                             ? "Robustness"
-                            : "Live"}
+                            : t === "research"
+                              ? "Research"
+                              : "Live"}
               </button>
             ))}
             {result && (
@@ -511,7 +538,18 @@ export default function App() {
                 }} />
             )}
 
-            {!["live", "sweep", "scan", "validation"].includes(tab) && !result && !error && (
+            {tab === "research" && research && (
+              <ResearchView session={research}
+                onReply={async (payload) => {
+                  try { setResearch(await api.researchReply(research.id, payload)); } catch (e) { setError((e as ApiError).message); }
+                }}
+                onOpenRun={(id) => openRun(id, { keepDocument: true })}
+                onOpenStrategy={async (id) => {
+                  try { openDocument(await openSaved(id), id); } catch (e) { setError((e as ApiError).message); }
+                }} />
+            )}
+
+            {!["live", "sweep", "scan", "validation", "research"].includes(tab) && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
                 <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>

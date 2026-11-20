@@ -24,5 +24,37 @@
     ],
     "scan_json": "{\"condition\": {\"conditions\": [{\"cmp\": \">\", \"left\": \"close\", \"right\": \"sma50\"}], \"op\": \"AND\"}, \"indicators\": [{\"id\": \"sma50\", \"params\": {\"period\": 50, \"source\": \"close\"}, \"type\": \"SMA\"}], \"lookback\": 20, \"name\": \"Above 50-day SMA (described)\", \"side\": \"long\", \"universe\": {\"symbols\": [\"SIM|NIFTY\", \"SIM|RELIANCE\"]}}",
     "unsupported_reason": ""
+  },
+  {
+    "notes": "Two filters to cut false signals.",
+    "variants": [
+      {
+        "hypothesis": "RSI filter",
+        "change_summary": "Only enter when RSI(14) is above 50",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/indicators/-",
+            "value_json": "{\"id\": \"rsi\", \"type\": \"RSI\", \"params\": {\"period\": 14}}"
+          },
+          {
+            "op": "add",
+            "path": "/entry/conditions/-",
+            "value_json": "{\"left\": \"rsi\", \"cmp\": \">\", \"right\": 50}"
+          }
+        ]
+      },
+      {
+        "hypothesis": "Faster EMA",
+        "change_summary": "Use a 5-period fast EMA",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/indicators/0/params/period",
+            "value_json": "5"
+          }
+        ]
+      }
+    ]
   }
 ]

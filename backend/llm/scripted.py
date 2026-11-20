@@ -1,8 +1,12 @@
 """A scripted provider for end-to-end tests and offline demos.
 
 Enabled only by configuration (LLM_PROVIDER=scripted and LLM_SCRIPT=<file>);
-it answers each call with the next object from a JSON list. It is never the
-default and the UI shows its name, so it cannot be mistaken for a real model.
+it answers each call with the next object from a JSON list that fits the
+call: the first remaining answer that has every field the call's schema
+requires. So a strategy compile, an explanation, a scan and a research plan
+each take their own answers in order, whatever order the calls arrive in, and
+one end-to-end spec can run alone. It is never the default and the UI shows
+its name, so it cannot be mistaken for a real model.
 """
 
 from __future__ import annotations
@@ -29,9 +33,11 @@ class ScriptedLLM:
     def complete_json(self, *, system: str, messages: list[dict[str, Any]], schema: dict[str, Any],
                       max_tokens: int = 32000) -> LLMResponse:
         with self._lock:
-            if not self._answers:
-                raise LLMError("The scripted model has no answers left.")
-            answer = self._answers.pop(0)
+            required = set(schema.get("required") or [])
+            index = next((i for i, a in enumerate(self._answers) if required <= set(a)), None)
+            if index is None:
+                raise LLMError("The scripted model has no answer left for this kind of call.")
+            answer = self._answers.pop(index)
         return LLMResponse(data=answer, model=self.model, usage=Usage(1000, 200))
 
 
