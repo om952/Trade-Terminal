@@ -205,5 +205,24 @@ def test_scripted_provider_replays_a_file(tmp_path, monkeypatch):
     assert factory.status()["configured"] and factory.status()["model"] == "scripted:script.json"
     assert factory.get_client().complete_json(system="", messages=[], schema={}).data == {"a": 1}
     assert factory.get_client().complete_json(system="", messages=[], schema={}).data == {"b": 2}
-    with pytest.raises(LLMError, match="no answers left"):
+    with pytest.raises(LLMError, match="no answer left"):
         factory.get_client().complete_json(system="", messages=[], schema={})
+
+
+def test_scripted_provider_answers_each_kind_of_call_in_its_own_order(tmp_path):
+    from backend.llm.scripted import ScriptedLLM
+
+    script = tmp_path / "script.json"
+    script.write_text(json.dumps([
+        {"explanation": "first explanation", "caveats": []},
+        {"status": "ready", "scan_json": "{}", "questions": [], "assumptions": [], "unsupported_reason": ""},
+        {"explanation": "second explanation", "caveats": []},
+    ]))
+    llm = ScriptedLLM(script)
+    scan_schema = {"required": ["status", "scan_json"]}
+    explain_schema = {"required": ["explanation", "caveats"]}
+    assert llm.complete_json(system="", messages=[], schema=scan_schema).data["scan_json"] == "{}"
+    assert llm.complete_json(system="", messages=[], schema=explain_schema).data["explanation"] == "first explanation"
+    assert llm.complete_json(system="", messages=[], schema=explain_schema).data["explanation"] == "second explanation"
+    with pytest.raises(LLMError, match="no answer left"):
+        llm.complete_json(system="", messages=[], schema=scan_schema)

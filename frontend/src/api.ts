@@ -613,6 +613,54 @@ export interface ScanCompileResult {
   error?: string;
 }
 
+export interface ResearchProposal {
+  id: string;
+  hypothesis: string;
+  change_summary: string;
+  status: "accepted" | "rejected" | "dropped";
+  reason?: string;
+  family?: string;
+}
+
+export interface ResearchEstimate {
+  candidates: number;
+  backtests_min: number;
+  backtests_max: number;
+  max_backtests: number;
+  model_calls_used: number;
+  model_tokens_used: number;
+  model_calls_to_come: number;
+}
+
+export interface ResearchCandidate {
+  id: string;
+  hypothesis: string;
+  family: string;
+  run_id: string | null;
+  metrics: { sharpe: number | null; net_pnl: number | null; total_trades: number | null; max_drawdown_pct: number | null } | null;
+  deflated?: Deflated;
+  dsr: number | null;
+  outcome: "survived" | "failed";
+  reason: string;
+  checks?: { profitable_folds: number; folds: number; survives_slippage: boolean; verdicts: string[] };
+}
+
+export interface ResearchSession {
+  id: string;
+  title: string;
+  instrument: string;
+  phase: "working" | "awaiting_plan_approval" | "awaiting_choice" | "done" | "rejected" | "failed" | "interrupted" | "idle";
+  goal: string | null;
+  regime: string | null;
+  proposals: ResearchProposal[];
+  estimate: ResearchEstimate | null;
+  ranking: ResearchCandidate[];
+  kept: { id: string; strategy_id: string; version: number }[];
+  events: { kind: string; text: string; data?: Record<string, any> }[];
+  error: string | null;
+  job: { id: string; status: string; progress: number; message: string; error: string | null } | null;
+}
+
 export interface BuilderBacktestSettings {
   start?: string;
   end?: string;
@@ -752,6 +800,18 @@ export const api = {
   checkRobustness: (payload: { strategy: unknown; symbol?: string; starting_capital: number; lot_size: number;
     slippage_bps?: number; max_leverage?: number; folds: number; second_symbol?: string }) =>
     request<Job<import("./Validation").RobustnessResult>>("/api/jobs/validate", { method: "POST", body: JSON.stringify(payload) }),
+
+  researchStart: (payload: { strategy?: unknown; strategy_id?: string; goal: string; symbol?: string;
+    starting_capital?: number; lot_size?: number; slippage_bps?: number }) =>
+    request<ResearchSession>("/api/research", { method: "POST", body: JSON.stringify(payload) }),
+
+  researchList: () =>
+    request<{ sessions: { id: string; title: string; instrument: string; updated_at: string }[] }>("/api/research"),
+
+  research: (id: string) => request<ResearchSession>(`/api/research/${encodeURIComponent(id)}`),
+
+  researchReply: (id: string, payload: Record<string, unknown>) =>
+    request<ResearchSession>(`/api/research/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify(payload) }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

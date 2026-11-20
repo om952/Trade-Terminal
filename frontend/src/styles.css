@@ -555,12 +555,16 @@ td.down { color: var(--short); }
 .seg-control { display: flex; gap: 0; }
 .seg-control button {
   flex: 1;
-  padding: 6px 10px;
+  min-width: 0;                      /* five tabs must fit the sidebar */
+  padding: 6px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   color: var(--ink-2);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .seg-control button:first-child { border-radius: 4px 0 0 4px; }
 .seg-control button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
