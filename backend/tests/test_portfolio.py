@@ -168,6 +168,11 @@ def test_a_recorded_portfolio_run(stored):
     params = service.PortfolioParams(spec=_spec().model_dump(mode="json"), fetch=False)
     out = service.run(params)
     assert out["kind"] == "portfolio" and out["run_id"] and out["metrics"]["total_trades"] >= 0
+    m = out["metrics"]
+    # Net P&L is the change in equity, so it agrees with the return, open holdings included.
+    assert m["net_pnl"] == pytest.approx(m["total_return_pct"] / 100 * 1_000_000, abs=1.0)
+    assert m["net_pnl"] == pytest.approx(m["realized_pnl"] + m["unrealized_pnl"], abs=0.01)
+    assert out["holdings"] and m["unrealized_pnl"] != 0
     assert out["data"]["instruments"] == 4 and out["synthetic_data"] is True
     assert out["deflated"]["trials"] == 1 and out["family_trials"]["runs"] == 1
     stored_run = runs.get(out["run_id"])

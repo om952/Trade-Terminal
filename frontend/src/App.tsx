@@ -13,6 +13,7 @@ import { SweepTable, sweepCount } from "./Sweep";
 import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
 import { ValidationView, type RobustnessResult, type ValidateOptions } from "./Validation";
 import { ResearchPanel, ResearchView, openSaved } from "./Research";
+import { BLANK_PORTFOLIO, PortfolioPanel, PortfolioView, usePortfolioRun, type PortfolioRunSettings } from "./Portfolio";
 import type { ResearchSession } from "./api";
 
 const BLANK_STRATEGY = {
@@ -30,7 +31,7 @@ const BLANK_STRATEGY = {
   risk: { max_concurrent_positions: 1 },
 };
 
-type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "validation" | "research" | "live";
+type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "portfolio" | "validation" | "research" | "live";
 
 const SWEEP_POLL_MS = 1000;
 type Panel = "assistant" | "builder" | "screener" | "research" | "library";
@@ -143,6 +144,25 @@ export default function App() {
   const showResearch = (s: ResearchSession | null) => {
     setResearch(s);
     if (s) setTab("research");
+  };
+
+  // Portfolio strategies (backend/portfolio), edited in the Screener's Portfolio mode.
+  const [screenerMode, setScreenerMode] = useState<"scan" | "portfolio">("scan");
+  const [portfolioSpec, setPortfolioSpec] = useState<Record<string, any>>(BLANK_PORTFOLIO);
+  const [portfolioJob, setPortfolioJob] = useState<Job<{ run_id: string }> | null>(null);
+  const portfolioRunning = portfolioJob != null && !TERMINAL_JOB.includes(portfolioJob.status);
+  useJobPoll(portfolioJob, setPortfolioJob, setError);
+  const [portfolioRun, setPortfolioRun] = usePortfolioRun(portfolioJob, setError);
+
+  const runPortfolio = async (settings: PortfolioRunSettings) => {
+    setError(null);
+    setPortfolioRun(null);
+    try {
+      setPortfolioJob(await api.portfolio({ spec: portfolioSpec, ...settings }));
+      setTab("portfolio");
+    } catch (e) {
+      setError((e as ApiError).message || "Portfolio backtest did not start");
+    }
   };
 
   const runScan = async (mode: "now" | "history", override?: Record<string, any>) => {
@@ -401,8 +421,23 @@ export default function App() {
           )}
 
           {panel === "screener" && (
-            <ScreenerPanel spec={scanSpec} setSpec={setScanSpec} catalogue={indicators}
-              running={scanning} onRun={runScan} savedId={savedScanId} setSavedId={setSavedScanId} />
+            <>
+              <div className="chip-row" style={{ marginBottom: 8 }} role="tablist" aria-label="Screener mode">
+                {(["scan", "portfolio"] as const).map((m) => (
+                  <button key={m} role="tab" aria-selected={screenerMode === m}
+                    className={`chip ${screenerMode === m ? "active" : ""}`} onClick={() => setScreenerMode(m)}>
+                    {m === "scan" ? "Scan" : "Portfolio"}
+                  </button>
+                ))}
+              </div>
+              {screenerMode === "scan" ? (
+                <ScreenerPanel spec={scanSpec} setSpec={setScanSpec} catalogue={indicators}
+                  running={scanning} onRun={runScan} savedId={savedScanId} setSavedId={setSavedScanId} />
+              ) : (
+                <PortfolioPanel spec={portfolioSpec} setSpec={setPortfolioSpec} catalogue={indicators}
+                  running={portfolioRunning} onRun={runPortfolio} />
+              )}
+            </>
           )}
 
           {panel === "builder" && <>
@@ -443,15 +478,15 @@ export default function App() {
 
         <main className="content">
           <nav className="tabs">
-            {(["chart", "performance", "trades", "sweep", "scan", "validation", "research", "live"] as Tab[])
-              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob)
+            {(["chart", "performance", "trades", "sweep", "scan", "portfolio", "validation", "research", "live"] as Tab[])
+              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob) && (t !== "portfolio" || portfolioJob)
                 && (t !== "validation" || validateJob) && (t !== "research" || research))
               .map((t) => (
               <button
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={!["live", "sweep", "scan", "validation", "research"].includes(t) && (!result || (t === "chart" && !result.chart))}
+                disabled={!["live", "sweep", "scan", "portfolio", "validation", "research"].includes(t) && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -463,6 +498,8 @@ export default function App() {
                         ? `Sweep${sweep ? ` (${sweep.variants.length})` : ""}`
                         : t === "scan"
                           ? "Scan"
+                          : t === "portfolio"
+                            ? "Portfolio"
                           : t === "validation"
                             ? "Robustness"
                             : t === "research"
@@ -549,7 +586,9 @@ export default function App() {
                 }} />
             )}
 
-            {!["live", "sweep", "scan", "validation", "research"].includes(tab) && !result && !error && (
+            {tab === "portfolio" && <PortfolioView job={portfolioJob} run={portfolioRun} />}
+
+            {!["live", "sweep", "scan", "portfolio", "validation", "research"].includes(tab) && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
                 <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>

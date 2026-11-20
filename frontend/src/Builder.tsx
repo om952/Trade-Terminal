@@ -350,6 +350,7 @@ export function IndicatorPanel({ doc, setDoc, catalogue }: { doc: Doc; setDoc: (
         <div className="rule" key={i}>
           <div className="rule-head">
             <input
+              type="text"
               className="mono"
               style={{ width: 118 }}
               value={ind.id}
@@ -363,6 +364,7 @@ export function IndicatorPanel({ doc, setDoc, catalogue }: { doc: Doc; setDoc: (
               <div className="field" key={key} style={{ marginBottom: 0 }}>
                 <label>{key}</label>
                 <input
+                  type="text"
                   className="mono"
                   value={String(value)}
                   onChange={(e) => setParam(i, key, e.target.value)}
@@ -473,6 +475,7 @@ export function ConditionPanel({
               {COMPARATORS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <input
+              type="text"
               className="mono"
               list={`refs-${title.replace(/\s/g, "")}`}
               value={operandValue(c.right)}
@@ -573,7 +576,7 @@ function LegPanel({ doc, setDoc }: { doc: Doc; setDoc: (d: Doc) => void }) {
                 onChange={(e) => patch(i, { option: { ...leg.option, right: e.target.value } })}>
                 <option value="CE">CE</option><option value="PE">PE</option>
               </select>
-              <input className="mono" value={leg.option.strike_rule}
+              <input type="text" className="mono" value={leg.option.strike_rule}
                 onChange={(e) => patch(i, { option: { ...leg.option, strike_rule: e.target.value } })}
                 placeholder="ATM+0" />
               <select className="mono" value={leg.option.expiry}
@@ -660,15 +663,15 @@ function RiskPanel({
       <div className="row">
         <div className="field">
           <label>start</label>
-          <input className="mono" value={session.start ?? "09:20"} onChange={(e) => setSession("start", e.target.value)} />
+          <input type="text" className="mono" value={session.start ?? "09:20"} onChange={(e) => setSession("start", e.target.value)} />
         </div>
         <div className="field">
           <label>end</label>
-          <input className="mono" value={session.end ?? "15:10"} onChange={(e) => setSession("end", e.target.value)} />
+          <input type="text" className="mono" value={session.end ?? "15:10"} onChange={(e) => setSession("end", e.target.value)} />
         </div>
         <div className="field">
           <label>square off</label>
-          <input className="mono" value={session.square_off ?? ""} placeholder="none"
+          <input type="text" className="mono" value={session.square_off ?? ""} placeholder="none"
             onChange={(e) => setSession("square_off", e.target.value || null)} />
         </div>
       </div>
