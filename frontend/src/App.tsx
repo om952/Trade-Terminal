@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, TERMINAL_JOB } from "./api";
 import type {
-  BacktestResult, Dataset, IndicatorMeta, Job, RunSummary, Status, SweepResult, TemplateMeta, ValidationResult,
+  BacktestResult, Dataset, IndicatorMeta, Job, RunSummary, ScanResult, Status, SweepResult, TemplateMeta,
+  ValidationResult,
 } from "./api";
 import { Assistant } from "./Assistant";
 import { Builder, type RunConfig } from "./Builder";
@@ -9,6 +10,7 @@ import { Library } from "./Library";
 import { ChartTab, PerformanceTab, TradeLogTab } from "./Results";
 import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./Live";
 import { SweepTable, sweepCount } from "./Sweep";
+import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
 
 const BLANK_STRATEGY = {
   name: "New Strategy",
@@ -25,10 +27,10 @@ const BLANK_STRATEGY = {
   risk: { max_concurrent_positions: 1 },
 };
 
-type Tab = "chart" | "performance" | "trades" | "sweep" | "live";
+type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "live";
 
 const SWEEP_POLL_MS = 1000;
-type Panel = "assistant" | "builder" | "library";
+type Panel = "assistant" | "builder" | "screener" | "library";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -61,6 +63,20 @@ export default function App() {
   const [sweepJob, setSweepJob] = useState<Job<SweepResult> | null>(null);
   const [sweep, setSweep] = useState<SweepResult | null>(null);
   const sweeping = sweepJob != null && !TERMINAL_JOB.includes(sweepJob.status);
+  const [scanSpec, setScanSpec] = useState<Record<string, any>>(BLANK_SCAN);
+  const [scanJob, setScanJob] = useState<Job<ScanResult> | null>(null);
+  const scanning = scanJob != null && !TERMINAL_JOB.includes(scanJob.status);
+  useJobPoll(scanJob, setScanJob, setError);
+
+  const runScan = async (mode: "now" | "history") => {
+    setError(null);
+    try {
+      setScanJob(await api.scan({ spec: scanSpec, mode }));
+      setTab("scan");
+    } catch (e) {
+      setError((e as ApiError).message || "Scan did not start");
+    }
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -286,10 +302,10 @@ export default function App() {
       <div className="main">
         <aside className="sidebar">
           <div className="seg-control" role="tablist">
-            {(["assistant", "builder", "library"] as Panel[]).map((p) => (
+            {(["assistant", "builder", "screener", "library"] as Panel[]).map((p) => (
               <button key={p} role="tab" aria-selected={panel === p}
                 className={panel === p ? "active" : ""} onClick={() => setPanel(p)}>
-                {p === "assistant" ? "Assistant" : p === "builder" ? "Builder" : "Library"}
+                {p === "assistant" ? "Assistant" : p === "builder" ? "Builder" : p === "screener" ? "Screener" : "Library"}
               </button>
             ))}
           </div>
@@ -299,6 +315,11 @@ export default function App() {
           )}
 
           {panel === "library" && <Library onOpenDocument={openDocument} onOpenRun={openRun} />}
+
+          {panel === "screener" && (
+            <ScreenerPanel spec={scanSpec} setSpec={setScanSpec} catalogue={indicators}
+              running={scanning} onRun={runScan} />
+          )}
 
           {panel === "builder" && <>
           <div className="row" style={{ gap: 6, marginBottom: 8 }}>
@@ -338,14 +359,14 @@ export default function App() {
 
         <main className="content">
           <nav className="tabs">
-            {(["chart", "performance", "trades", "sweep", "live"] as Tab[])
-              .filter((t) => t !== "sweep" || sweepJob || sweep)
+            {(["chart", "performance", "trades", "sweep", "scan", "live"] as Tab[])
+              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob))
               .map((t) => (
               <button
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={t !== "live" && t !== "sweep" && (!result || (t === "chart" && !result.chart))}
+                disabled={t !== "live" && t !== "sweep" && t !== "scan" && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -355,7 +376,9 @@ export default function App() {
                       ? `Trade Log${result ? ` (${result.trades.length})` : ""}`
                       : t === "sweep"
                         ? `Sweep${sweep ? ` (${sweep.variants.length})` : ""}`
-                        : "Live"}
+                        : t === "scan"
+                          ? "Scan"
+                          : "Live"}
               </button>
             ))}
             {result && (
@@ -411,7 +434,15 @@ export default function App() {
               />
             )}
 
-            {tab !== "live" && tab !== "sweep" && !result && !error && (
+            {tab === "scan" && (
+              <ScanResults job={scanJob} result={scanJob?.status === "succeeded" ? scanJob.result : null}
+                onCancel={async () => {
+                  if (!scanJob) return;
+                  try { setScanJob(await api.cancelJob(scanJob.id) as Job<ScanResult>); } catch { /* finished */ }
+                }} />
+            )}
+
+            {tab !== "live" && tab !== "sweep" && tab !== "scan" && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
                 <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>

@@ -53,8 +53,8 @@ def cmd_status(args) -> int:
     try:
         n = inst.count()
         synced = None
-        from backend.data.store import get_db
-        row = get_db().execute("SELECT value FROM meta WHERE key='instruments_synced_at'").fetchone()
+        from backend.data.store import read
+        row = read("SELECT value FROM meta WHERE key='instruments_synced_at'").fetchone()
         if row:
             synced = row[0]
         print(f"  {n:,} contracts" + (f", synced {synced[:19]}" if synced else ""))

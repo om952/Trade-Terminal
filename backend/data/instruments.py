@@ -118,7 +118,7 @@ def sync(exchange: Exchange = "complete") -> int:
     source of truth, and a stale contract lingering in our table would be a
     silent source of orders against instruments that no longer trade.
     """
-    from backend.data.store import get_db
+    from backend.data import store
 
     instruments = download(exchange)
     if not instruments:
@@ -133,7 +133,8 @@ def sync(exchange: Exchange = "complete") -> int:
         for i in instruments
     ]
 
-    db = get_db()
+    # Its own cursor, closed when done: the shared connection is not thread-safe.
+    db = store.get_db().cursor()
     db.execute("BEGIN TRANSACTION")
     try:
         db.execute("DELETE FROM instruments")
@@ -153,6 +154,8 @@ def sync(exchange: Exchange = "complete") -> int:
     except Exception:
         db.execute("ROLLBACK")
         raise
+    finally:
+        db.close()
 
     log.info("Synced %d instruments", len(rows))
     return len(rows)
@@ -174,9 +177,9 @@ def resolve(symbol: str) -> str:
     if upper in INDICES:
         return INDICES[upper]
 
-    from backend.data.store import get_db
+    from backend.data.store import read
 
-    row = get_db().execute(
+    row = read(
         """SELECT instrument_key FROM instruments
            WHERE upper(trading_symbol) = ? AND instrument_type = 'EQ'
            ORDER BY exchange = 'NSE' DESC LIMIT 1""",
@@ -189,9 +192,9 @@ def resolve(symbol: str) -> str:
 
 def option_chain(underlying: str, expiry: date) -> list[Instrument]:
     """All CE/PE contracts for an underlying and expiry, ordered by strike."""
-    from backend.data.store import get_db
+    from backend.data.store import read
 
-    rows = get_db().execute(
+    rows = read(
         """SELECT instrument_key, trading_symbol, name, exchange, segment,
                   instrument_type, lot_size, tick_size, expiry,
                   strike_price, underlying_key, underlying_symbol
@@ -205,10 +208,10 @@ def option_chain(underlying: str, expiry: date) -> list[Instrument]:
 
 def expiries(underlying: str, on_or_after: date | None = None) -> list[date]:
     """Available option expiries for an underlying, soonest first."""
-    from backend.data.store import get_db
+    from backend.data.store import read
 
     cutoff = on_or_after or datetime.now(IST).date()
-    rows = get_db().execute(
+    rows = read(
         """SELECT DISTINCT expiry FROM instruments
            WHERE underlying_symbol = ? AND instrument_type IN ('CE','PE')
              AND expiry >= ?
@@ -219,9 +222,9 @@ def expiries(underlying: str, on_or_after: date | None = None) -> list[date]:
 
 
 def lot_size(instrument_key: str) -> int:
-    from backend.data.store import get_db
+    from backend.data.store import read
 
-    row = get_db().execute(
+    row = read(
         "SELECT lot_size FROM instruments WHERE instrument_key = ?", [instrument_key]
     ).fetchone()
     return int(row[0]) if row else 1
@@ -237,14 +240,14 @@ def search(text: str, limit: int = 20, tradeable_only: bool = True) -> list[Inst
     Cash equity and indices rank above derivatives: typing "RELIANCE" almost
     always means the stock, not one of its 400 option contracts.
     """
-    from backend.data.store import get_db
+    from backend.data.store import read
 
     needle = text.upper().strip()
     type_filter = (
         "AND instrument_type IN ('EQ','INDEX','FUT')" if tradeable_only else ""
     )
 
-    rows = get_db().execute(
+    rows = read(
         f"""SELECT instrument_key, trading_symbol, name, exchange, segment,
                    instrument_type, lot_size, tick_size, expiry,
                    strike_price, underlying_key, underlying_symbol
@@ -276,15 +279,15 @@ def search(text: str, limit: int = 20, tradeable_only: bool = True) -> list[Inst
 
 
 def count() -> int:
-    from backend.data.store import get_db
+    from backend.data.store import read
 
-    return get_db().execute("SELECT count(*) FROM instruments").fetchone()[0]
+    return read("SELECT count(*) FROM instruments").fetchone()[0]
 
 
 def iter_underlyings(segment: str) -> Iterable[str]:
-    from backend.data.store import get_db
+    from backend.data.store import read
 
-    for (sym,) in get_db().execute(
+    for (sym,) in read(
         "SELECT DISTINCT underlying_symbol FROM instruments WHERE segment = ? "
         "AND underlying_symbol IS NOT NULL ORDER BY 1",
         [segment],

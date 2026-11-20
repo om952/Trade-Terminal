@@ -266,6 +266,13 @@ range (`5..20 step 5`) for any number in the document, and the assistant runs a
 sweep when you ask it to try a range. Results list every variant in grid order;
 none is marked best.
 
+A scan runs one condition tree across many instruments on daily bars:
+`POST /api/jobs/scan` with `{"spec": {"name": ..., "universe": {"symbols":
+[...]} or {"preset": "fno_stocks"}, "indicators": [...], "condition": {...}},
+"mode": "now" | "history"}`. *now* reports each stock's status, when the
+condition began to hold and how far price is from the line; *history* reports
+every onset with forward returns next to a buy-and-hold baseline.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash
