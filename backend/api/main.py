@@ -575,6 +575,16 @@ def jobs_backtest(req: job_services.BacktestJob) -> dict:
         return job_runner.submit("backtest", req.model_dump(mode="json"))
 
 
+@app.post("/api/jobs/validate", status_code=202)
+def jobs_validate(req: job_services.ValidateJob) -> dict:
+    """Walk-forward, neighbourhood (swept strategies), slippage stress and an optional second
+    instrument for one strategy. Poll the job; the runs are recorded but are not trials."""
+    with _service_errors():
+        document, _ = job_services.resolve_document(req)
+        backtest_service.validate(document)
+        return job_runner.submit("validate", req.model_dump(mode="json"))
+
+
 @app.get("/api/holdout")
 def holdout_status() -> dict:
     """Where the final holdout starts, and how many ideas have had their one look."""

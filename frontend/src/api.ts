@@ -749,6 +749,10 @@ export const api = {
     slippage_bps?: number; max_leverage?: number }) =>
     request<Job<{ run_id: string }>>("/api/jobs/final-test", { method: "POST", body: JSON.stringify(payload) }),
 
+  checkRobustness: (payload: { strategy: unknown; symbol?: string; starting_capital: number; lot_size: number;
+    slippage_bps?: number; max_leverage?: number; folds: number; second_symbol?: string }) =>
+    request<Job<import("./Validation").RobustnessResult>>("/api/jobs/validate", { method: "POST", body: JSON.stringify(payload) }),
+
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 
   cancelJob: (id: string) =>
