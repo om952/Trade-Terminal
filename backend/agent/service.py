@@ -285,6 +285,17 @@ def run_turn(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
 job_services.runner.register("agent_turn", run_turn)
 
 
+def run_scan_compile(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    """A plain-English scan turn (backend/agent/scan_agent.py). Never runs the scan."""
+    from backend.agent import scan_agent
+
+    ctx.progress(0.1, "Reading the screen" if not params.get("current") else "Applying the change")
+    return scan_agent.run_job(params, lambda: _llm_factory())
+
+
+job_services.runner.register("scan_compile", run_scan_compile)
+
+
 # ---------------------------------------------------------------------------
 # Reading
 # ---------------------------------------------------------------------------

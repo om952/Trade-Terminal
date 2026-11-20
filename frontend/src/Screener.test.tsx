@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { HistoryPrefetch, ScanResults } from "./Screener";
+import { HistoryPrefetch, ScanAssistant, ScanResults } from "./Screener";
 import type { Job, ScanResult } from "./api";
 
 afterEach(cleanup);
@@ -108,5 +108,42 @@ describe("HistoryPrefetch", () => {
     fireEvent.click(await screen.findByText("Resume download"));
     await screen.findByText(/1200\/3000 requests/);
     expect(calls).toContain("POST /api/jobs/j1/resume");
+  });
+});
+
+describe("ScanAssistant", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks, reads back, and hands the spec over only when the trader chooses", async () => {
+    const spec = { name: "Breakout", universe: { preset: "fno_stocks" }, condition: { op: "AND", conditions: [] } };
+    const bodies: Record<string, unknown>[] = [];
+    let n = 0;
+    const results = [
+      { status: "needs_clarification", dialogue: [{ role: "user", content: "breakouts" }],
+        questions: [{ question: "Which line?", why: "it decides the trigger", options: ["20-day high", "50-day high"] }] },
+      { status: "ready", spec, assumptions: ["Stocks with NSE futures"],
+        card: { title: "Breakout", summary: "", sections: [{ heading: "Find where", lines: ["close > the 100th percentile of high"] }] } },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        bodies.push(JSON.parse(init.body as string));
+        return new Response(JSON.stringify({ id: `j${++n}`, kind: "scan_compile", status: "queued", progress: 0, message: "", result: null, error: null }));
+      }
+      const id = Number(url.split("/j").pop());
+      return new Response(JSON.stringify({ id: `j${id}`, kind: "scan_compile", status: "succeeded", progress: 1, message: "", result: results[id - 1], error: null }));
+    }));
+    const onUse = vi.fn();
+    render(<ScanAssistant onUse={onUse} />);
+    fireEvent.change(screen.getByLabelText("Describe a scan"), { target: { value: "breakouts" } });
+    fireEvent.click(screen.getByText("Build scan"));
+
+    fireEvent.click(await screen.findByText("20-day high", {}, { timeout: 3000 }));
+    fireEvent.click(screen.getByText("Answer"));
+    expect(await screen.findByText(/Check before scanning: Breakout/, {}, { timeout: 3000 })).toBeTruthy();
+    expect(bodies[1]).toEqual({ text: "Q: Which line?\nA: 20-day high", dialogue: [{ role: "user", content: "breakouts" }] });
+    expect(onUse).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Use and scan now"));
+    expect(onUse).toHaveBeenCalledWith(spec, true);
   });
 });

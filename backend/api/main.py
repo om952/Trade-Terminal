@@ -651,6 +651,19 @@ def scans_archive(scan_id: str) -> dict:
     return {"id": scan_id, "archived": True}
 
 
+class ScanCompileRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    dialogue: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+    current: dict[str, Any] | None = None     # a scan to change, instead of a new description
+
+
+@app.post("/api/scans/compile", status_code=202)
+def scans_compile(req: ScanCompileRequest) -> dict:
+    """Plain English to a scan spec and read-back. Never runs the scan; poll the job."""
+    with _service_errors():
+        return job_runner.submit("scan_compile", req.model_dump(mode="json"))
+
+
 @app.post("/api/scans/{scan_id}/check", status_code=202)
 def scans_check(scan_id: str) -> dict:
     """Run an alert check now, as the schedule would. Poll the job for the result."""

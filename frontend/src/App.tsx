@@ -69,10 +69,10 @@ export default function App() {
   const scanning = scanJob != null && !TERMINAL_JOB.includes(scanJob.status);
   useJobPoll(scanJob, setScanJob, setError);
 
-  const runScan = async (mode: "now" | "history") => {
+  const runScan = async (mode: "now" | "history", override?: Record<string, any>) => {
     setError(null);
     try {
-      setScanJob(await api.scan({ spec: scanSpec, mode }));
+      setScanJob(await api.scan({ spec: override ?? scanSpec, mode }));
       setTab("scan");
     } catch (e) {
       setError((e as ApiError).message || "Scan did not start");

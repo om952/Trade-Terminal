@@ -586,6 +586,18 @@ export interface PrefetchResult {
   elapsed_seconds: number;
 }
 
+export interface ScanCompileResult {
+  status: "ready" | "needs_clarification" | "unsupported" | "failed";
+  spec?: Record<string, unknown>;
+  card?: ReadbackCard;
+  assumptions?: string[];
+  questions?: Question[];
+  dialogue?: { role: string; content: string }[];
+  change_summary?: string;
+  reason?: string;
+  error?: string;
+}
+
 export interface BuilderBacktestSettings {
   start?: string;
   end?: string;
@@ -714,6 +726,9 @@ export const api = {
 
   resumeJob: <R = unknown>(id: string) =>
     request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+
+  compileScan: (payload: { text: string; dialogue?: { role: string; content: string }[]; current?: unknown }) =>
+    request<Job<ScanCompileResult>>("/api/scans/compile", { method: "POST", body: JSON.stringify(payload) }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

@@ -45,4 +45,14 @@ test("screener: scan a list now and in history, with unscannable stocks reported
   await expect(aside.getByText(/Baseline recorded: \d of 2 meet the condition/)).toBeVisible({ timeout: 60_000 });
   await aside.getByRole("button", { name: "Check now" }).click();
   await expect(aside.getByText(/No new session since the last check/)).toBeVisible({ timeout: 60_000 });
+
+  // Described in words (the scripted model's third answer): read back, then used and scanned.
+  await page.getByLabel("Describe a scan").fill("Stocks in my two-stock list above their 50-day average");
+  await page.getByRole("button", { name: "Build scan" }).click();
+  await expect(aside.getByText(/Check before scanning: Above 50-day SMA \(described\)/)).toBeVisible({ timeout: 60_000 });
+  await expect(aside.getByText("close > sma50", { exact: true })).toBeVisible();
+  await expect(aside.getByText("Report the past 20 days")).toBeVisible();
+  await aside.getByRole("button", { name: "Use and scan now" }).click();
+  await expect(main.getByText(/Above 50-day SMA \(described\) · as of/)).toBeVisible({ timeout: 60_000 });
+  await expect(main.locator("table tbody tr")).toHaveCount(2);
 });

@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, TERMINAL_JOB } from "./api";
 import type {
-  IndicatorMeta, Job, PrefetchPlan, PrefetchResult, ReturnStats, SavedScan, SavedScanDetail, ScanCheckResult, ScanResult, ScanRow, ScanStatus,
+  IndicatorMeta, Job, PrefetchPlan, Question, ScanCompileResult, PrefetchResult, ReturnStats, SavedScan, SavedScanDetail, ScanCheckResult, ScanResult, ScanRow, ScanStatus,
   ScanValidation,
 } from "./api";
 import { ConditionPanel, IndicatorPanel, PRICE_FIELDS } from "./Builder";
@@ -83,7 +83,8 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedI
   setSpec: (d: Doc) => void;
   catalogue: IndicatorMeta[];
   running: boolean;
-  onRun: (mode: "now" | "history") => void;
+  /** Run a scan; `override` runs that spec instead of the one being edited. */
+  onRun: (mode: "now" | "history", override?: Doc) => void;
   savedId: string | null;
   setSavedId: (id: string | null) => void;
 }) {
@@ -115,6 +116,14 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedI
 
   return (
     <>
+      <ScanAssistant
+        onUse={(d, run) => {
+          setSpec(d);
+          setSymbolsText(((d.universe as Doc | undefined)?.symbols ?? []).join(", "));
+          setSavedId(null);
+          if (run) onRun("now", d);      // this spec, not the one in the editor before the update
+        }} />
+
       <SavedScans spec={spec} setSpec={setSpec} valid={Boolean(check?.valid)}
         savedId={savedId} setSavedId={setSavedId}
         onLoaded={(d) => setSymbolsText(((d.universe as Doc | undefined)?.symbols ?? []).join(", "))} />
@@ -195,6 +204,109 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedI
         </button>
       </div>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/** Describe a scan in words; read it back; use it only when the trader says so. */
+export function ScanAssistant({ onUse }: {
+  onUse: (spec: Doc, runNow: boolean) => void;
+}) {
+  const [text, setText] = useState("");
+  const [job, setJob] = useState<Job<ScanCompileResult> | null>(null);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [changing, setChanging] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  useJobPoll(job, setJob, setProblem);
+  const working = job != null && !TERMINAL_JOB.includes(job.status);
+  const result = job?.status === "succeeded" ? job.result : null;
+
+  useEffect(() => { setAnswers((result?.questions ?? []).map(() => "")); }, [result]);
+
+  const send = async (payload: { text: string; dialogue?: ScanCompileResult["dialogue"]; current?: Doc }) => {
+    setProblem(null);
+    try { setJob(await api.compileScan(payload)); } catch (e) { setProblem((e as ApiError).message); }
+  };
+
+  const answerText = (questions: Question[]) =>
+    questions.map((q, i) => `Q: ${q.question}\nA: ${answers[i]}`).join("\n");
+
+  return (
+    <div className="panel">
+      <div className="panel-title"><span>Describe a scan</span></div>
+      <textarea rows={3} aria-label="Describe a scan" value={text}
+        placeholder="e.g. F&O stocks that closed above their 20-day high with volume above its 20-day average"
+        onChange={(e) => setText(e.target.value)} />
+      <button className="btn" style={{ width: "100%" }} disabled={working || !text.trim()}
+        onClick={() => { setChanging(false); send({ text: text.trim() }); }}>
+        {working ? <><span className="spinner" /> {job?.message || "Reading the screen…"}</> : "Build scan"}
+      </button>
+      {problem && <div className="notice error">{problem}</div>}
+      {job?.status === "failed" && <div className="notice error">{job.error}</div>}
+
+      {result?.status === "needs_clarification" && result.questions && (
+        <div className="card" style={{ marginTop: 8 }}>
+          {result.questions.map((q, i) => (
+            <div key={i} className="field">
+              <label htmlFor={`scan-q-${i}`}>{q.question}</label>
+              <span className="hint">{q.why}</span>
+              <div className="chip-row">
+                {q.options.map((o) => (
+                  <button key={o} className={`chip ${answers[i] === o ? "active" : ""}`}
+                    onClick={() => setAnswers(answers.map((a, j) => (j === i ? o : a)))}>{o}</button>
+                ))}
+              </div>
+              <input id={`scan-q-${i}`} type="text" value={answers[i] ?? ""} placeholder="or type an answer"
+                onChange={(e) => setAnswers(answers.map((a, j) => (j === i ? e.target.value : a)))} />
+            </div>
+          ))}
+          <button className="btn" disabled={working || answers.some((a) => !a?.trim())}
+            onClick={() => send({ text: answerText(result.questions!), dialogue: result.dialogue })}>Answer</button>
+        </div>
+      )}
+
+      {result?.status === "ready" && result.card && result.spec && (
+        <div className="card readback" style={{ marginTop: 8 }}>
+          <div className="readback-title">Check before scanning: {result.card.title}</div>
+          {result.change_summary && <div className="hint">Change: {result.change_summary}</div>}
+          {result.card.sections.map((sec) => (
+            <div key={sec.heading} className="readback-section">
+              <div className="readback-heading">{sec.heading}</div>
+              <ul>{sec.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>
+            </div>
+          ))}
+          {(result.assumptions ?? []).length > 0 && (
+            <div className="readback-section assumptions">
+              <div className="readback-heading">Assumed (not stated by you)</div>
+              <ul>{result.assumptions!.map((a, i) => <li key={i}>{a}</li>)}</ul>
+            </div>
+          )}
+          {!changing ? (
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              <button className="btn" onClick={() => onUse(result.spec as Doc, true)}>Use and scan now</button>
+              <button className="btn secondary" onClick={() => onUse(result.spec as Doc, false)}>Use this scan</button>
+              <button className="btn secondary tiny" onClick={() => { setChanging(true); setText(""); }}>Change…</button>
+            </div>
+          ) : (
+            <div>
+              <textarea rows={2} aria-label="Requested change" value={text} placeholder="What should be different?"
+                onChange={(e) => setText(e.target.value)} />
+              <div className="row" style={{ gap: 6 }}>
+                <button className="btn" disabled={working || !text.trim()}
+                  onClick={() => send({ text: text.trim(), current: result.spec as Doc })}>Send change</button>
+                <button className="btn secondary tiny" onClick={() => setChanging(false)}>Back</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {result && ["unsupported", "failed"].includes(result.status) && (
+        <div className="notice error">{result.reason ?? result.error}</div>
+      )}
+      {!result && !working && <div className="hint">Nothing runs until you choose to use the scan.</div>}
+    </div>
   );
 }
 
