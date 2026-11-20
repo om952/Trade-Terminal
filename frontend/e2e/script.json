@@ -14,5 +14,15 @@
     "caveats": [
       "Synthetic data says nothing about real markets."
     ]
+  },
+  {
+    "status": "ready",
+    "questions": [],
+    "assumptions": [
+      "Daily bars",
+      "Report the past 20 days"
+    ],
+    "scan_json": "{\"condition\": {\"conditions\": [{\"cmp\": \">\", \"left\": \"close\", \"right\": \"sma50\"}], \"op\": \"AND\"}, \"indicators\": [{\"id\": \"sma50\", \"params\": {\"period\": 50, \"source\": \"close\"}, \"type\": \"SMA\"}], \"lookback\": 20, \"name\": \"Above 50-day SMA (described)\", \"side\": \"long\", \"universe\": {\"symbols\": [\"SIM|NIFTY\", \"SIM|RELIANCE\"]}}",
+    "unsupported_reason": ""
   }
 ]
