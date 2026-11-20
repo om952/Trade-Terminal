@@ -361,6 +361,11 @@ function ResultCard({ run, document, onOpenRun, onStartPaper }: {
           the more of the best result is luck.
         </p>
       )}
+      {run.deflated && run.deflated.dsr != null && (
+        <p className="hint" title="Deflated Sharpe ratio: the chance the edge is real after every distinct test of this idea.">
+          Deflated Sharpe {Math.round(run.deflated.dsr * 100)}% after {run.deflated.trials} tr{run.deflated.trials === 1 ? "y" : "ies"}: {run.deflated.verdict}.
+        </p>
+      )}
       {run.warnings.length > 0 && (
         <ul className="caveats">{run.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
       )}

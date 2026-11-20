@@ -60,7 +60,27 @@ def _equity_svg(curve: list[dict[str, Any]], width: int = 760, height: int = 180
             f"<p class='muted'>Equity from {lo:,.0f} to {hi:,.0f}.</p>")
 
 
-def render(run: dict[str, Any], card: dict[str, Any] | None, trials: dict[str, Any] | None) -> str:
+def _deflated_html(d: dict[str, Any] | None) -> str:
+    if not d:
+        return ""
+
+    def pct(x: float | None) -> str:
+        return "–" if x is None else f"{x * 100:.0f}%"
+
+    return (
+        "<h2>Is it luck?</h2><table class='metrics'>"
+        f"<tr><th>Sharpe (annual, from {d['days']} daily returns)</th><td>{_fmt(d.get('sharpe'), '{:.2f}')}</td></tr>"
+        f"<tr><th>Chance the true Sharpe is above zero</th><td>{pct(d.get('psr'))}</td></tr>"
+        f"<tr><th>Best Sharpe expected from {d['trials']} worthless tries</th><td>{_fmt(d.get('benchmark_sharpe'), '{:.2f}')}</td></tr>"
+        f"<tr><th>Chance it beats that (deflated Sharpe)</th><td>{pct(d.get('dsr'))}</td></tr>"
+        f"<tr><th>Verdict</th><td>{escape(str(d.get('verdict', '')))}</td></tr></table>"
+        "<p class='muted'>Deflated Sharpe ratio (Bailey and López de Prado): the probability the edge is real "
+        "after allowing for every distinct test of this idea so far. 95% is the usual bar.</p>"
+    )
+
+
+def render(run: dict[str, Any], card: dict[str, Any] | None, trials: dict[str, Any] | None,
+           deflated: dict[str, Any] | None = None) -> str:
     result = run.get("result") or {}
     metrics = result.get("metrics") or run.get("metrics") or {}
     data = result.get("data") or run.get("data") or {}
@@ -109,6 +129,7 @@ table {{ border-collapse: collapse; width: 100%; font-size: 13px; }} th, td {{ t
 {escape(' (derived from ' + data['derived_from'] + ')') if data.get('derived_from') else ''}<br>
 {escape(str(data.get('first_bar', ''))[:10])} to {escape(str(data.get('last_bar', ''))[:10])} · {int(data.get('bars') or 0):,} bars · {int(data.get('missing_sessions') or 0)} missing session(s) · fingerprint {escape(str(data.get('fingerprint', ''))[:12])}</p>
 <h2>Results</h2><table class="metrics">{rows}</table>
+{_deflated_html(deflated)}
 <h2>Equity</h2>{_equity_svg(result.get('equity_curve') or [])}
 <h2>Trades</h2>
 <table class="trades"><thead><tr><th>Entry</th><th>Exit</th><th>Side</th><th>Qty</th><th>Entry price</th><th>Exit price</th><th>Net P&amp;L</th><th>Reason</th></tr></thead>
@@ -132,8 +153,12 @@ def write(run_id: str) -> dict[str, Any]:
         card = None
     family = run.get("family") or family_key(run["document"])
     trials = runs.family_trials(family) if family else None
+    from backend.services.jobs import deflated_sharpe
+
+    metrics_now = (run.get("result") or {}).get("metrics") or run.get("metrics") or {}
+    deflated = deflated_sharpe(metrics_now, family) if family else None
     path = reports_dir() / f"{run_id}.html"
-    path.write_text(render(run, card, trials), encoding="utf-8")
+    path.write_text(render(run, card, trials, deflated), encoding="utf-8")
     metrics = (run.get("result") or {}).get("metrics") or run.get("metrics") or {}
     return {
         "run_id": run_id, "path": str(path),
@@ -141,4 +166,5 @@ def write(run_id: str) -> dict[str, Any]:
                                                   "sharpe", "win_rate_pct", "total_trades")},
         "synthetic_data": bool((run.get("result") or {}).get("synthetic_data")),
         "family_trials": trials,
+        "deflated": deflated,
     }

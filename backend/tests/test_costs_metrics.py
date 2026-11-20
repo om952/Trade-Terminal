@@ -296,12 +296,46 @@ def test_bars_per_year_scales_with_timeframe():
     assert M.bars_per_year("1h") == 252 * 6
 
 
-def test_sharpe_annualization_differs_by_timeframe():
-    """Using the daily default on 5-minute data would inflate Sharpe ~9x."""
-    curve = make_curve([100_000 * (1.001 ** i) for i in range(200)])
-    daily = M.compute_metrics(curve, [], Decimal("100000"), "1d")
-    intraday = M.compute_metrics(curve, [], Decimal("100000"), "5m")
-    assert intraday.sharpe > daily.sharpe * 5
+def test_sharpe_comes_from_daily_returns_whatever_the_bar_size():
+    """The same daily path gives the same Sharpe on 5-minute bars as on daily bars.
+
+    Annualizing per-bar returns by bars per year made a strategy's Sharpe depend
+    on the chart it ran on (and inflated it ~9x when the label was wrong).
+    """
+    import random
+    from datetime import datetime, timedelta
+
+    rng = random.Random(7)
+    closes, value = [], 100_000.0
+    for _ in range(120):
+        value *= 1 + rng.gauss(0.0005, 0.01)
+        closes.append(value)
+    start = datetime(2025, 1, 1, 9, 15)
+    daily = [(start + timedelta(days=d), Decimal(str(c))) for d, c in enumerate(closes)]
+    intraday = []
+    prev = 100_000.0
+    for d, c in enumerate(closes):
+        for k in range(75):                     # a 5-minute path from the previous close to this one
+            v = prev + (c - prev) * (k + 1) / 75 + (rng.random() - 0.5) * 50 * (k < 74)
+            intraday.append((start + timedelta(days=d, minutes=5 * k), Decimal(str(v))))
+        prev = c
+    on_days = M.compute_metrics(daily, [], Decimal("100000"), "1d")
+    on_bars = M.compute_metrics(intraday, [], Decimal("100000"), "5m")
+    assert on_days.return_days == on_bars.return_days == 120
+    assert on_bars.sharpe == pytest.approx(on_days.sharpe, rel=1e-9)
+    assert on_bars.volatility_pct == pytest.approx(on_days.volatility_pct, rel=1e-9)
+
+
+def test_mostly_idle_strategies_are_not_charged_a_risk_free_rate():
+    """In the market rarely, small gains: Sharpe is positive, not -50."""
+    from datetime import datetime, timedelta
+
+    start = datetime(2025, 1, 1, 9, 15)
+    values = [100_000 + 40 * (d // 10) for d in range(250)]      # a small gain every tenth day, kept
+    curve = [(start + timedelta(days=d), Decimal(str(v))) for d, v in enumerate(values)]
+    m = M.compute_metrics(curve, [], Decimal("100000"), "15m")
+    assert m.total_return_pct > 0 and m.sharpe > 0
+    assert m.return_skew > 0 and m.return_kurtosis > 3, "rare jumps: positive skew, fat tails"
 
 
 def test_metrics_on_empty_inputs():

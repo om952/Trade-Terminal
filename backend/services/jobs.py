@@ -66,7 +66,16 @@ def backtest_and_record(
     payload["trials"] = runs.trial_count(payload["strategy_hash"])
     payload["family"] = family_key(document)
     payload["family_trials"] = runs.family_trials(payload["family"])
+    payload["deflated"] = deflated_sharpe(payload["metrics"], payload["family"])
     return json.loads(to_json(payload))
+
+
+def deflated_sharpe(metrics: dict[str, Any], family: str) -> dict[str, Any]:
+    """The run's Sharpe deflated by every distinct experiment in its family so far."""
+    from backend.analytics import validation
+
+    sharpes = runs.family_experiments(family)
+    return validation.deflate(metrics, sharpes, len(sharpes)).as_dict()
 
 
 def run_backtest_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:

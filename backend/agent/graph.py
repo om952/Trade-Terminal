@@ -495,6 +495,7 @@ def _run_summary(report: dict[str, Any]) -> dict[str, Any]:
         "trials": report.get("trials"),
         "family": report.get("family"),
         "family_trials": report.get("family_trials"),
+        "deflated": report.get("deflated"),
     }
 
 
@@ -555,6 +556,7 @@ def _explain_facts(state: BuilderState, run: dict[str, Any]) -> dict[str, Any]:
                    "bars": data.get("bars"), "missing_sessions": data.get("missing_sessions")},
         "trades": run.get("trades"), "metrics": run.get("metrics"), "split": run.get("split"),
         "risk_blocks": run.get("blocked_reasons"), "warnings": run.get("warnings"),
+        "deflated_sharpe": run.get("deflated"),
         "option_premiums": "model (Black-Scholes), not market prices"
         if Strategy.model_validate(state["document"]).has_options else None,
     }
