@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # --- Alerts ---
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_chat_id: str = ""
+    # When saved scans with alerts on are checked, IST, comma-separated. A
+    # session's daily bar is only served the next day, so the default checks
+    # before the open and reports on the previous close.
+    scan_alert_times: str = "08:45"
+    scan_alerts_enabled: bool = True
 
     # --- Runtime ---
     mode: Mode = Mode.BACKTEST

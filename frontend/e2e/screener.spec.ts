@@ -30,4 +30,19 @@ test("screener: scan a list now and in history, with unscannable stocks reported
   await expect(main.getByText(/Above 50-day SMA · history/)).toBeVisible({ timeout: 60_000 });
   await expect(main.getByText(/baseline/).first()).toBeVisible();
   await expect(main.getByText(/differ from simply holding/)).toBeVisible();
+
+  // Save it, switch the daily alert on, and check now: a first check records a
+  // baseline; a second on the same bars finds no new session.
+  const aside = page.locator("aside");
+  await aside.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(aside.getByText("Saved", { exact: true })).toBeVisible();
+  await aside.getByLabel("Daily alert").check();
+  await expect(aside.getByText("Daily alert on")).toBeVisible();
+  await expect(aside.getByText(/Telegram is not set up/)).toBeVisible();
+  await expect(page.getByLabel("Saved scan")).toContainText("Above 50-day SMA · alert");
+
+  await aside.getByRole("button", { name: "Check now" }).click();
+  await expect(aside.getByText(/Baseline recorded: \d of 2 meet the condition/)).toBeVisible({ timeout: 60_000 });
+  await aside.getByRole("button", { name: "Check now" }).click();
+  await expect(aside.getByText(/No new session since the last check/)).toBeVisible({ timeout: 60_000 });
 });

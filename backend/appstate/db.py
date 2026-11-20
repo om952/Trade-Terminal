@@ -121,6 +121,54 @@ MIGRATIONS: list[Migration] = [
     CREATE INDEX ix_conversations_updated ON conversations(updated_at);
     """,
     _add_run_families,
+    # 4: saved scans, versioned like strategies; each alert check's snapshot
+    # of every stock's state, and the changes found between snapshots.
+    """
+    CREATE TABLE scans (
+        id              TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        current_hash    TEXT NOT NULL,
+        version         INTEGER NOT NULL,
+        alerts          INTEGER NOT NULL DEFAULT 0,
+        archived        INTEGER NOT NULL DEFAULT 0,
+        last_checked_at TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    );
+
+    CREATE TABLE scan_versions (
+        scan_id    TEXT NOT NULL REFERENCES scans(id),
+        version    INTEGER NOT NULL,
+        hash       TEXT NOT NULL,
+        document   TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (scan_id, version)
+    );
+
+    CREATE TABLE scan_snapshots (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id    TEXT NOT NULL REFERENCES scans(id),
+        version    INTEGER NOT NULL,
+        as_of      TEXT,
+        states     TEXT NOT NULL,
+        job_id     TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX ix_scan_snapshots ON scan_snapshots(scan_id, id);
+
+    CREATE TABLE scan_events (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id        TEXT NOT NULL REFERENCES scans(id),
+        snapshot_id    INTEGER NOT NULL REFERENCES scan_snapshots(id),
+        as_of          TEXT,
+        symbol         TEXT NOT NULL,
+        instrument_key TEXT NOT NULL,
+        kind           TEXT NOT NULL,
+        detail         TEXT NOT NULL,
+        created_at     TEXT NOT NULL
+    );
+    CREATE INDEX ix_scan_events ON scan_events(scan_id, id);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

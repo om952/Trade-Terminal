@@ -9,7 +9,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, TERMINAL_JOB } from "./api";
-import type { IndicatorMeta, Job, ReturnStats, ScanResult, ScanRow, ScanStatus, ScanValidation } from "./api";
+import type {
+  IndicatorMeta, Job, ReturnStats, SavedScan, SavedScanDetail, ScanCheckResult, ScanResult, ScanRow, ScanStatus,
+  ScanValidation,
+} from "./api";
 import { ConditionPanel, IndicatorPanel, PRICE_FIELDS } from "./Builder";
 
 type Doc = Record<string, any>;
@@ -75,12 +78,14 @@ export function useJobPoll<R>(job: Job<R> | null, setJob: (j: Job<R>) => void, o
 
 /* ------------------------------------------------------------------ */
 
-export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun }: {
+export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun, savedId, setSavedId }: {
   spec: Doc;
   setSpec: (d: Doc) => void;
   catalogue: IndicatorMeta[];
   running: boolean;
   onRun: (mode: "now" | "history") => void;
+  savedId: string | null;
+  setSavedId: (id: string | null) => void;
 }) {
   const [check, setCheck] = useState<ScanValidation | null>(null);
   const [symbolsText, setSymbolsText] = useState((spec.universe?.symbols ?? []).join(", "));
@@ -110,6 +115,10 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun }: {
 
   return (
     <>
+      <SavedScans spec={spec} setSpec={setSpec} valid={Boolean(check?.valid)}
+        savedId={savedId} setSavedId={setSavedId}
+        onLoaded={(d) => setSymbolsText(((d.universe as Doc | undefined)?.symbols ?? []).join(", "))} />
+
       <div className="panel">
         <div className="panel-title">Start from</div>
         <select className="mono" value="" aria-label="Starter scan" onChange={(e) => {
@@ -185,6 +194,132 @@ export function ScreenerPanel({ spec, setSpec, catalogue, running, onRun }: {
         </button>
       </div>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/** Saved scans: load, save versions, daily alerts on changes, and their history. */
+export function SavedScans({ spec, setSpec, valid, savedId, setSavedId, onLoaded }: {
+  spec: Doc;
+  setSpec: (d: Doc) => void;
+  valid: boolean;
+  savedId: string | null;
+  setSavedId: (id: string | null) => void;
+  onLoaded?: (d: Doc) => void;
+}) {
+  const [list, setList] = useState<SavedScan[]>([]);
+  const [meta, setMeta] = useState<{ alert_times: string; telegram: boolean } | null>(null);
+  const [detail, setDetail] = useState<SavedScanDetail | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [checkJob, setCheckJob] = useState<Job<ScanCheckResult> | null>(null);
+  useJobPoll(checkJob, setCheckJob, (m) => setNote(m));
+
+  const refresh = async (id = savedId) => {
+    try {
+      const all = await api.savedScans();
+      setList(all.scans);
+      setMeta({ alert_times: all.alert_times, telegram: all.telegram });
+      setDetail(id ? await api.savedScan(id) : null);
+    } catch { /* backend down */ }
+  };
+  useEffect(() => { refresh(); }, [savedId]);
+  useEffect(() => { if (checkJob && TERMINAL_JOB.includes(checkJob.status)) refresh(); }, [checkJob?.status]);
+
+  const load = async (id: string) => {
+    setNote(null);
+    if (!id) { setSavedId(null); return; }
+    const scan = await api.savedScan(id);
+    setSpec(scan.document);
+    onLoaded?.(scan.document);
+    setSavedId(id);
+  };
+
+  const save = async (alerts?: boolean) => {
+    setNote(null);
+    try {
+      const out = await api.saveScan(spec, savedId ?? undefined, alerts);
+      setSavedId(out.id);
+      setNote(alerts !== undefined
+        ? (alerts ? "Daily alert on" : "Daily alert off")
+        : savedId ? (out.new_version ? `Saved as version ${out.version}` : "No changes to save") : "Saved");
+      refresh(out.id);
+    } catch (e) {
+      setNote(`Not saved: ${(e as ApiError).message}`);
+      refresh();
+    }
+  };
+
+  const checkResult = checkJob?.status === "succeeded" ? checkJob.result : null;
+
+  return (
+    <div className="panel">
+      <div className="panel-title"><span>Saved scans</span></div>
+      <div className="row" style={{ gap: 6 }}>
+        <select className="mono" aria-label="Saved scan" value={savedId ?? ""} onChange={(e) => load(e.target.value)}>
+          <option value="">— unsaved scan —</option>
+          {list.map((s) => <option key={s.id} value={s.id}>{s.name}{s.alerts ? " · alert" : ""}</option>)}
+        </select>
+        <button className="btn secondary tiny" style={{ flex: "0 0 auto" }} disabled={!valid} onClick={() => save()}>
+          {savedId ? "Save version" : "Save"}
+        </button>
+      </div>
+      {note && <div className="hint">{note}</div>}
+
+      {detail && (
+        <>
+          <label className="row" style={{ alignItems: "center", gap: 6, marginTop: 8 }}>
+            <input type="checkbox" style={{ flex: "0 0 auto", width: "auto" }} checked={detail.alerts}
+              disabled={!valid} aria-label="Daily alert"
+              onChange={(e) => { setDetail({ ...detail, alerts: e.target.checked }); save(e.target.checked); }} />
+            <span>Alert me when a stock triggers or falls back inside</span>
+          </label>
+          <div className="hint">
+            Checked at {meta?.alert_times ?? "08:45"} IST against the last completed session.{" "}
+            {meta?.telegram ? "Sent to Telegram." : "Telegram is not set up, so changes show here only."}
+            {detail.last_checked_at ? ` Last scheduled check ${detail.last_checked_at.slice(0, 16).replace("T", " ")}.` : ""}
+          </div>
+          <div className="row" style={{ gap: 6, marginTop: 6 }}>
+            <button className="btn secondary tiny" style={{ flex: "0 0 auto" }}
+              disabled={checkJob != null && !TERMINAL_JOB.includes(checkJob.status)}
+              onClick={async () => { try { setCheckJob(await api.checkScan(detail.id)); } catch (e) { setNote((e as ApiError).message); } }}>
+              Check now
+            </button>
+            <button className="btn danger tiny" style={{ flex: "0 0 auto" }}
+              onClick={async () => { await api.archiveScan(detail.id); setSavedId(null); refresh(null); }}>
+              Archive
+            </button>
+          </div>
+          {checkResult && (
+            <div className="hint" role="status">
+              {checkResult.new_session === false
+                ? `No new session since the last check (latest bar ${checkResult.as_of ?? "–"}).`
+                : checkResult.baseline
+                  ? `Baseline recorded: ${checkResult.active} of ${checkResult.scanned} meet the condition. Changes are reported from the next session.`
+                  : `${checkResult.events.length} change${checkResult.events.length === 1 ? "" : "s"} at the close of ${checkResult.as_of}.`}
+            </div>
+          )}
+          {checkJob?.status === "failed" && <div className="notice error">{checkJob.error}</div>}
+
+          <div className="readback-heading" style={{ marginTop: 8 }}>Recent changes</div>
+          {detail.events.length === 0
+            ? <div className="hint">None yet.</div>
+            : (
+              <ul className="caveats" aria-label="Recent changes">
+                {detail.events.slice(0, 15).map((e) => (
+                  <li key={e.id}>
+                    <span className="mono">{e.as_of}</span> <b>{e.symbol}</b>{" "}
+                    <span className={e.kind === "triggered" ? "pos" : ""}>
+                      {e.kind === "triggered" ? "triggered" : "back inside"}
+                    </span>
+                    {e.detail.distance_pct != null ? ` (${e.detail.distance_pct > 0 ? "+" : ""}${e.detail.distance_pct.toFixed(1)}%)` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
+        </>
+      )}
+    </div>
   );
 }
 
