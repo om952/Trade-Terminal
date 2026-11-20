@@ -13,8 +13,9 @@ import { SweepTable, sweepCount } from "./Sweep";
 import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
 import { ValidationView, type RobustnessResult, type ValidateOptions } from "./Validation";
 import { ResearchPanel, ResearchView, openSaved } from "./Research";
-import { BLANK_PORTFOLIO, PortfolioPanel, PortfolioView, usePortfolioRun, type PortfolioRunSettings } from "./Portfolio";
-import type { ResearchSession } from "./api";
+import { BLANK_PORTFOLIO, PortfolioPanel, PortfolioView, usePortfolioRun, type PortfolioRun, type PortfolioRunSettings } from "./Portfolio";
+import { PaperPortfolios } from "./PaperPortfolio";
+import type { PortfolioStep, ResearchSession } from "./api";
 
 const BLANK_STRATEGY = {
   name: "New Strategy",
@@ -153,6 +154,28 @@ export default function App() {
   const portfolioRunning = portfolioJob != null && !TERMINAL_JOB.includes(portfolioJob.status);
   useJobPoll(portfolioJob, setPortfolioJob, setError);
   const [portfolioRun, setPortfolioRun] = usePortfolioRun(portfolioJob, setError);
+
+  // Paper portfolio sessions (backend/portfolio/session.py), shown in the Portfolio tab.
+  const [hasPaper, setHasPaper] = useState(false);
+  const [paperFocus, setPaperFocus] = useState<string | null>(null);
+  const [paperVersion, setPaperVersion] = useState(0);
+  const [paperJob, setPaperJob] = useState<Job<PortfolioStep> | null>(null);
+  useEffect(() => {
+    api.portfolioSessions().then((r) => setHasPaper(r.sessions.length > 0)).catch(() => undefined);
+  }, []);
+  const startPaperPortfolio = async (run: PortfolioRun) => {
+    setError(null);
+    try {
+      const made = await api.startPortfolioSession({
+        spec: run.document, starting_capital: Number(run.params?.starting_capital ?? 1_000_000),
+        slippage_bps: Number(run.params?.slippage_bps ?? 5),
+      });
+      setHasPaper(true);
+      setPaperFocus(made.id);
+      setPaperJob(made.job);
+      setPaperVersion((v) => v + 1);
+    } catch (e) { setError((e as ApiError).message); }
+  };
 
   const runPortfolio = async (settings: PortfolioRunSettings) => {
     setError(null);
@@ -479,7 +502,7 @@ export default function App() {
         <main className="content">
           <nav className="tabs">
             {(["chart", "performance", "trades", "sweep", "scan", "portfolio", "validation", "research", "live"] as Tab[])
-              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob) && (t !== "portfolio" || portfolioJob)
+              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob) && (t !== "portfolio" || portfolioJob || hasPaper)
                 && (t !== "validation" || validateJob) && (t !== "research" || research))
               .map((t) => (
               <button
@@ -586,7 +609,13 @@ export default function App() {
                 }} />
             )}
 
-            {tab === "portfolio" && <PortfolioView job={portfolioJob} run={portfolioRun} />}
+            {tab === "portfolio" && (
+              <>
+                <PortfolioView job={portfolioJob} run={portfolioRun} onPaper={startPaperPortfolio} />
+                <PaperPortfolios focus={paperFocus} setFocus={setPaperFocus} version={paperVersion}
+                  startJob={paperJob} onError={setError} />
+              </>
+            )}
 
             {!["live", "sweep", "scan", "portfolio", "validation", "research"].includes(tab) && !result && !error && (
               <div className="empty">

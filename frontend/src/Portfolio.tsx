@@ -226,13 +226,16 @@ export interface PortfolioRun {
   holdings: { symbol: string; quantity: number; avg_price: number; last_close: number; since: string }[];
   notes: string[];
   deflated?: Deflated;
+  /** The spec and settings this run tested, so paper trading starts exactly that. */
+  document?: Doc;
+  params?: Record<string, unknown>;
 }
 
-function fmt(n: number | null | undefined, digits = 2) {
+export function fmt(n: number | null | undefined, digits = 2) {
   return n == null ? "–" : n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-function EquityLine({ points }: { points: { equity: number }[] }) {
+export function EquityLine({ points }: { points: { equity: number }[] }) {
   if (points.length < 2) return null;
   const values = points.map((p) => p.equity);
   const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
@@ -246,7 +249,12 @@ function EquityLine({ points }: { points: { equity: number }[] }) {
 }
 
 /** Main area: a portfolio run's results. */
-export function PortfolioView({ job, run }: { job: Job<{ run_id: string }> | null; run: PortfolioRun | null }) {
+export function PortfolioView({ job, run, onPaper }: {
+  job: Job<{ run_id: string }> | null;
+  run: PortfolioRun | null;
+  /** Start a paper session of the run's portfolio. */
+  onPaper?: (run: PortfolioRun) => void;
+}) {
   const running = job != null && !TERMINAL_JOB.includes(job.status);
   const m = run?.metrics ?? {};
   return (
@@ -267,6 +275,11 @@ export function PortfolioView({ job, run }: { job: Job<{ run_id: string }> | nul
               {run.data.instruments} stocks · {run.data.first_bar.slice(0, 10)} to {run.data.last_bar.slice(0, 10)}
               {run.data.benchmark ? ` · filter on ${run.data.benchmark}` : ""}
             </span>
+            {onPaper && run.document && (
+              <button className="btn secondary" style={{ flex: "0 0 auto", marginLeft: 12 }} onClick={() => onPaper(run)}>
+                Paper trade this portfolio
+              </button>
+            )}
           </div>
           {run.notes.length > 0 && <ul className="caveats">{run.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
 
@@ -359,7 +372,8 @@ export function usePortfolioRun(job: Job<{ run_id: string }> | null, onError: (m
     // The run is recorded before its deflated Sharpe is computed (the trial count
     // includes it), so the deflated figure comes from the job's result.
     const deflated = (job.result as { deflated?: Deflated }).deflated;
-    api.run(job.result.run_id).then((r) => setRun({ ...(r.result as unknown as PortfolioRun), deflated }))
+    api.run(job.result.run_id).then((r) => setRun({ ...(r.result as unknown as PortfolioRun), deflated,
+      document: r.document, params: r.params }))
       .catch((e) => onError((e as ApiError).message));
   }, [job?.status, job?.result?.run_id]);
   return [run, setRun] as const;

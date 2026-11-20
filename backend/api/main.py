@@ -98,18 +98,17 @@ async def lifespan(_: FastAPI):
     from backend.ops import backup
 
     threading.Thread(target=backup.create_if_due, name="backup", daemon=True).start()
-    # Saved scans with alerts on are checked at SCAN_ALERT_TIMES.
-    scheduler = None
-    if settings.scan_alerts_enabled:
-        from backend.scan.alerts import Scheduler
+    # The morning scheduler: saved scans with alerts on are checked at
+    # SCAN_ALERT_TIMES (unless SCAN_ALERTS_ENABLED is off), and paper portfolio
+    # sessions step at PORTFOLIO_STEP_TIMES.
+    from backend.scan.alerts import Scheduler
 
-        scheduler = Scheduler(job_runner.submit)
-        scheduler.start()
+    scheduler = Scheduler(job_runner.submit)
+    scheduler.start()
 
     yield
 
-    if scheduler is not None:
-        scheduler.stop()
+    scheduler.stop()
 
     await run_in_threadpool(job_runner.shutdown)
     from backend.services import pool
@@ -657,6 +656,74 @@ def jobs_portfolio(req: dict[str, Any]) -> dict:
         except portfolio.InvalidPortfolio as exc:
             raise HTTPException(422, {"errors": exc.errors}) from exc
         return job_runner.submit("portfolio", params.model_dump(mode="json"))
+
+
+class PortfolioSessionRequest(BaseModel):
+    spec: dict[str, Any]
+    starting_capital: float = Field(default=1_000_000, gt=0)
+    slippage_bps: float = Field(default=5.0, ge=0, le=500)
+    mode: Literal["paper", "live"] = "paper"
+    name: str | None = None
+
+
+@contextmanager
+def _portfolio_session_errors():
+    from backend.portfolio import service as portfolio
+    from backend.portfolio import session
+
+    try:
+        yield
+    except portfolio.InvalidPortfolio as exc:
+        raise HTTPException(422, {"errors": exc.errors}) from exc
+    except session.NotFound as exc:
+        raise HTTPException(404, f"No portfolio session {exc.args[0]!r}") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/portfolio/sessions", status_code=201)
+def portfolio_session_create(req: PortfolioSessionRequest) -> dict:
+    """Start a paper portfolio: it steps to each session close at PORTFOLIO_STEP_TIMES. Live is refused (Phase 5)."""
+    from backend.portfolio import session
+
+    with _portfolio_session_errors():
+        created = session.create(req.spec, starting_capital=req.starting_capital, slippage_bps=req.slippage_bps,
+                                 mode=req.mode, name=req.name)
+    created["job"] = job_runner.submit("portfolio_step", {"session_id": created["id"]})
+    return created
+
+
+@app.get("/api/portfolio/sessions")
+def portfolio_session_list() -> dict:
+    from backend.portfolio import session
+
+    return {"sessions": session.list_all(), "step_times": settings.portfolio_step_times}
+
+
+@app.get("/api/portfolio/sessions/{session_id}")
+def portfolio_session_get(session_id: str) -> dict:
+    from backend.portfolio import session
+
+    with _portfolio_session_errors():
+        return session.get(session_id)
+
+
+@app.post("/api/portfolio/sessions/{session_id}/step", status_code=202)
+def portfolio_session_step(session_id: str) -> dict:
+    """Bring the session up to the last completed close now, instead of waiting for the schedule."""
+    from backend.portfolio import session
+
+    with _portfolio_session_errors():
+        session.get(session_id)
+    return job_runner.submit("portfolio_step", {"session_id": session_id})
+
+
+@app.post("/api/portfolio/sessions/{session_id}/stop")
+def portfolio_session_stop(session_id: str) -> dict:
+    from backend.portfolio import session
+
+    with _portfolio_session_errors():
+        return session.stop(session_id)
 
 
 @app.get("/api/holdout")

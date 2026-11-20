@@ -217,6 +217,42 @@ MIGRATIONS: list[Migration] = [
     );
     CREATE INDEX ix_research_memory ON research_memory(instrument, base_family);
     """,
+    # 7: paper portfolio sessions (P4.1). A session steps once a day; each
+    # session day it recorded is a row that is never rewritten (the paper record).
+    """
+    CREATE TABLE portfolio_sessions (
+        id              TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        spec            TEXT NOT NULL,
+        spec_hash       TEXT NOT NULL,
+        family          TEXT NOT NULL,
+        members         TEXT NOT NULL,
+        benchmark       TEXT,
+        mode            TEXT NOT NULL,
+        starting_capital REAL NOT NULL,
+        slippage_bps    REAL NOT NULL,
+        start_date      TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        status_reason   TEXT,
+        state           TEXT,
+        last_bar_date   TEXT,
+        last_step_at    TEXT,
+        last_scheduled_at TEXT,
+        created_at      TEXT NOT NULL,
+        stopped_at      TEXT
+    );
+
+    CREATE TABLE portfolio_session_days (
+        session_id  TEXT NOT NULL REFERENCES portfolio_sessions(id),
+        day         TEXT NOT NULL,
+        equity      REAL NOT NULL,
+        cash        REAL NOT NULL,
+        fills       TEXT NOT NULL,
+        rebalance   TEXT,
+        recorded_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, day)
+    );
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

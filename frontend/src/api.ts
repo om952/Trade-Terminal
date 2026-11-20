@@ -482,6 +482,49 @@ export interface Job<R = unknown> {
 
 export const TERMINAL_JOB: JobStatus[] = ["succeeded", "failed", "cancelled"];
 
+/** A paper portfolio session (backend/portfolio/session.py). */
+export interface PortfolioSessionSummary {
+  id: string;
+  name: string;
+  mode: "paper";
+  status: "active" | "stopped" | "halted";
+  status_reason: string | null;
+  start_date: string;
+  starting_capital: number;
+  slippage_bps: number;
+  members: number;
+  benchmark: string | null;
+  last_bar_date: string | null;
+  last_step_at: string | null;
+  created_at: string;
+  stopped_at: string | null;
+  equity: number | null;
+  net_pnl: number | null;
+  return_pct: number | null;
+}
+
+export interface PortfolioFill { symbol: string; side: "BUY" | "SELL"; quantity: number; price: number; fees: number; reason: string }
+
+export interface PortfolioSessionDetail extends PortfolioSessionSummary {
+  spec: Record<string, unknown>;
+  state: {
+    as_of: string | null; equity: number; cash: number; net_pnl: number; return_pct: number;
+    realized_pnl: number; unrealized_pnl: number; max_drawdown_pct: number;
+    holdings: { symbol: string; quantity: number; avg_price: number; last_close: number; since: string }[];
+    pending: { symbol: string; side: "BUY" | "SELL"; quantity: number; reason: string }[];
+    trades: { symbol: string; entry_time: string; exit_time: string; quantity: number; net_pnl: number }[];
+    missing: { symbol: string; reason: string }[];
+    notes: string[];
+  } | null;
+  days: { day: string; equity: number; cash: number; fills: PortfolioFill[];
+    rebalance: { regime_on: boolean; targets: string[]; orders: number } | null }[];
+}
+
+export interface PortfolioStep {
+  session_id: string; status: string; new_days: number; as_of?: string | null; fills?: number;
+  waiting?: boolean; reason?: string; skipped?: boolean;
+}
+
 export type ScanStatus =
   | "triggered_today" | "holding" | "lapsed" | "waiting" | "not_enough_data" | "no_data" | "error" | "ok";
 
@@ -819,6 +862,22 @@ export const api = {
 
   portfolio: (payload: { spec: unknown; starting_capital: number; slippage_bps: number }) =>
     request<Job<{ run_id: string }>>("/api/jobs/portfolio", { method: "POST", body: JSON.stringify(payload) }),
+
+  portfolioSessions: () =>
+    request<{ sessions: PortfolioSessionSummary[]; step_times: string }>("/api/portfolio/sessions"),
+
+  portfolioSession: (id: string) =>
+    request<PortfolioSessionDetail>(`/api/portfolio/sessions/${encodeURIComponent(id)}`),
+
+  startPortfolioSession: (payload: { spec: unknown; starting_capital: number; slippage_bps: number; name?: string }) =>
+    request<PortfolioSessionDetail & { job: Job<PortfolioStep> }>(
+      "/api/portfolio/sessions", { method: "POST", body: JSON.stringify({ ...payload, mode: "paper" }) }),
+
+  stepPortfolioSession: (id: string) =>
+    request<Job<PortfolioStep>>(`/api/portfolio/sessions/${encodeURIComponent(id)}/step`, { method: "POST" }),
+
+  stopPortfolioSession: (id: string) =>
+    request<PortfolioSessionDetail>(`/api/portfolio/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

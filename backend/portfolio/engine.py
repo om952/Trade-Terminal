@@ -16,6 +16,12 @@ The day, in order:
 
 So a decision never sees the price it fills at, and a fill never uses a
 price from before the decision.
+
+`trade_from` starts trading on a given day: earlier bars only warm up the
+indicators (no equity, no decisions), and the first session on or after it
+is a decision day whatever the schedule, so a paper portfolio is invested
+from its first close instead of waiting for the next month. A backtest leaves
+it unset.
 """
 
 from __future__ import annotations
@@ -62,13 +68,16 @@ class PortfolioEngine:
     symbols: list[str]
     benchmark: str | None = None
     strategy_id: str = "portfolio"
+    trade_from: date | None = None
 
     cash: Decimal = field(init=False)
     holdings: dict[str, Holding] = field(default_factory=dict, init=False)
     pending: list[Pending] = field(default_factory=list, init=False)
     equity_curve: list[tuple[datetime, Decimal]] = field(default_factory=list, init=False)
+    cash_curve: list[tuple[datetime, Decimal]] = field(default_factory=list, init=False)
     trades: list[ClosedTrade] = field(default_factory=list, init=False)
     rebalances: list[dict[str, Any]] = field(default_factory=list, init=False)
+    fills: list[dict[str, Any]] = field(default_factory=list, init=False)
     notes: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -84,6 +93,7 @@ class PortfolioEngine:
         self._today: dict[str, Bar] = {}
         self._last_close: dict[str, Decimal] = {}
         self._sequence = 0
+        self._started = self.trade_from is None
 
     # -- feeding -------------------------------------------------------------
 
@@ -117,13 +127,22 @@ class PortfolioEngine:
         day, bars = self._day, self._today
         assert day is not None
         when = next(iter(bars.values())).timestamp
+        first = False
+        if not self._started:
+            if self.trade_from is not None and day < self.trade_from:     # warm-up only
+                for symbol, bar in bars.items():
+                    self._last_close[symbol] = bar.close
+                self._previous_day, self._today = day, {}
+                return
+            self._started = first = True
         self._execute(bars, when)
         for symbol, bar in bars.items():
             self._last_close[symbol] = bar.close
         for h in self.holdings.values():
             h.days_held += 1
         self.equity_curve.append((when, self._equity()))
-        if self._is_rebalance_day(day):
+        self.cash_curve.append((when, self.cash))
+        if first or self._is_rebalance_day(day):
             self._decide(day)
         self._previous_day, self._today = day, {}
 
@@ -212,6 +231,11 @@ class PortfolioEngine:
             if fill is None:
                 self.notes.append(f"{when.date()}: {order.side.value} {order.symbol} was rejected by the broker.")
                 continue
+            self.fills.append({
+                "date": when.date().isoformat(), "symbol": order.symbol, "side": fill.side.value,
+                "quantity": fill.quantity, "price": float(fill.price), "fees": float(fill.fees),
+                "reason": order.reason.value,
+            })
             if fill.side is Side.BUY:
                 self._bought(order.symbol, fill.quantity, fill.price, fill.fees, when)
             else:
@@ -245,6 +269,11 @@ class PortfolioEngine:
             del self.holdings[symbol]
 
     # -- reporting ---------------------------------------------------------------
+
+    def pending_orders(self) -> list[dict[str, Any]]:
+        """Orders decided at the last close, to fill at the next session's open."""
+        return [{"symbol": o.symbol, "side": o.side.value, "quantity": o.quantity, "reason": o.reason.value}
+                for o in sorted(self.pending, key=lambda o: (o.side is Side.BUY, o.symbol))]
 
     def open_holdings(self) -> list[dict[str, Any]]:
         return [{"symbol": s, "quantity": h.quantity, "avg_price": float(h.avg_price),

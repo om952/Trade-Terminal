@@ -185,7 +185,8 @@ def due(now: datetime, times: list[time], last_checked: str | None) -> bool:
 
 
 class Scheduler:
-    """Submits a check job for each alerting scan when a slot has passed."""
+    """The morning scheduler: submits a check job for each alerting scan, and a
+    step job for each active paper portfolio, when one of their slots has passed."""
 
     def __init__(self, submit: Callable[[str, dict], Any], interval: float = 60.0,
                  clock: Callable[[], datetime] | None = None) -> None:
@@ -199,12 +200,20 @@ class Scheduler:
         """Check once; returns the scans a job was submitted for."""
         times = parse_times(settings.scan_alert_times)
         now = self._clock()
-        owed = [s for s in saved.list_all() if s["alerts"] and due(now, times, s["last_checked_at"])]
+        owed = [s for s in saved.list_all() if s["alerts"] and due(now, times, s["last_checked_at"])] \
+            if settings.scan_alerts_enabled else []
         for scan in owed:
             self._submit("scan_check", {"scan_id": scan["id"]})
         if owed:
             saved.mark_checked([s["id"] for s in owed], now.isoformat(timespec="seconds"))
-        return [s["id"] for s in owed]
+        from backend.portfolio import session as portfolios
+
+        steps = portfolios.owed(now, parse_times(settings.portfolio_step_times))
+        for session_id in steps:
+            self._submit("portfolio_step", {"session_id": session_id})
+        if steps:
+            portfolios.mark_scheduled(steps, now.isoformat(timespec="seconds"))
+        return [s["id"] for s in owed] + steps
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):

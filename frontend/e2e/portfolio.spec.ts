@@ -23,4 +23,17 @@ test("portfolio: momentum rotation on a list, with a market filter, end to end",
   await expect(main.getByLabel("Is it luck?")).toBeVisible();
   await expect(main.getByLabel("Rebalances").locator("tbody tr").first()).toBeVisible();
   await expect(main.getByText(/Synthetic data/)).toBeVisible();
+
+  // Paper trade it: a session starts today, so it waits for its first close (or, after the close
+  // on a trading day, has recorded it).
+  await main.getByRole("button", { name: "Paper trade this portfolio" }).click();
+  const paper = main.getByLabel("Paper portfolio", { exact: true });
+  await expect(paper).toBeVisible();
+  await expect(main.getByLabel("Paper portfolio sessions").locator("tbody tr")).toHaveCount(1);
+  await expect(paper.getByText(/Waiting for the first session close|Orders for the next open/).first()).toBeVisible({ timeout: 60_000 });
+  await paper.getByRole("button", { name: "Update now" }).click();
+  await expect(paper.getByText(/No new session close yet|Recorded \d+ new session/)).toBeVisible({ timeout: 60_000 });
+  await paper.getByRole("button", { name: "Stop" }).click();
+  await expect(main.getByLabel("Paper portfolio sessions").getByText("stopped")).toBeVisible();
+  await expect(paper.getByRole("button", { name: "Update now" })).toBeDisabled();
 });
