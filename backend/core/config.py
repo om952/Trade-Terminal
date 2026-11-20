@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # data, fixed the first time it is used, are kept out of every ordinary
     # backtest; each strategy family may test on them once. 0 turns it off.
     holdout_months: int = Field(default=6, ge=0, le=60)
+    # The research graph (P4.3): hard caps on one research run.
+    research_max_variants: int = Field(default=8, ge=1, le=20)
+    research_max_backtests: int = Field(default=120, ge=10, le=1000)
 
     # --- Runtime ---
     mode: Mode = Mode.BACKTEST

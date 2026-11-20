@@ -185,6 +185,38 @@ MIGRATIONS: list[Migration] = [
         created_at    TEXT NOT NULL
     );
     """,
+    # 6: the research graph (P4.3). A session is the index of one research run
+    # (its graph state is in its own checkpoint file); research_memory records
+    # every candidate's outcome on an instrument and market regime, so later
+    # plans can avoid ideas that already failed there.
+    """
+    CREATE TABLE research_sessions (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        base_family TEXT NOT NULL,
+        instrument  TEXT NOT NULL,
+        job_id      TEXT,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+
+    CREATE TABLE research_memory (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id  TEXT NOT NULL REFERENCES research_sessions(id),
+        base_family TEXT NOT NULL,
+        family      TEXT NOT NULL,
+        instrument  TEXT NOT NULL,
+        regime      TEXT NOT NULL,
+        hypothesis  TEXT NOT NULL,
+        outcome     TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        sharpe      REAL,
+        dsr         REAL,
+        run_id      TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX ix_research_memory ON research_memory(instrument, base_family);
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

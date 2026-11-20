@@ -23,7 +23,7 @@ from backend.appstate.db import connection, transaction
 from backend.core.config import IST
 from backend.strategy.schema import Strategy
 
-Origin = Literal["manual", "template", "agent", "import"]
+Origin = Literal["manual", "template", "agent", "import", "research"]
 
 
 class StrategyNotFound(KeyError):

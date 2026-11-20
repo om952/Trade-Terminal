@@ -303,6 +303,17 @@ parameter values also work, reruns at 1x to 5x slippage, and optionally on a
 second instrument. These runs are recorded but do not count as new tries of
 the idea.
 
+### Research runs
+
+`POST /api/research` with a strategy and a goal asks the model for up to eight
+structurally different variants (a variant that only changes numbers is
+rejected by code). The plan, with how many backtests it will take, waits for
+approval (`POST /api/research/{id}/reply` with `{"action": "approve"}`). Every
+candidate is then backtested, deflated by the whole search, and checked with
+walk-forward and slippage runs if it clears that bar; reply with
+`{"keep": [ids]}` to save survivors. Outcomes are remembered per instrument and
+market regime, so failed ideas are not proposed again.
+
 ### Using it from Claude Desktop (MCP)
 
 `trade-terminal mcp` serves the platform's tools over MCP (stdio) for Claude
