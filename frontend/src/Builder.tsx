@@ -21,7 +21,7 @@ const COMPARATORS = [
   { value: "crosses_below", label: "crosses below" },
 ];
 
-const PRICE_FIELDS = ["close", "open", "high", "low", "volume", "hl2", "hlc3", "ohlc4"];
+export const PRICE_FIELDS = ["close", "open", "high", "low", "volume", "hl2", "hlc3", "ohlc4"];
 const CONTEXT_FIELDS = ["pivot", "tc", "bc", "r1", "r2", "r3", "s1", "s2", "s3", "cpr_width",
   "prev_day_high", "prev_day_low", "prev_day_close", "vwap"];
 
@@ -299,7 +299,7 @@ function InstrumentPanel({
 
 /* ------------------------------------------------------------------ */
 
-function IndicatorPanel({ doc, setDoc, catalogue }: { doc: Doc; setDoc: (d: Doc) => void; catalogue: IndicatorMeta[] }) {
+export function IndicatorPanel({ doc, setDoc, catalogue }: { doc: Doc; setDoc: (d: Doc) => void; catalogue: IndicatorMeta[] }) {
   const [adding, setAdding] = useState("");
 
   const byCategory = useMemo(() => {
@@ -387,7 +387,7 @@ function IndicatorPanel({ doc, setDoc, catalogue }: { doc: Doc; setDoc: (d: Doc)
 
 /* ------------------------------------------------------------------ */
 
-function ConditionPanel({
+export function ConditionPanel({
   title, node, options, onChange, optional,
 }: {
   title: string;
@@ -417,12 +417,19 @@ function ConditionPanel({
     onChange(next.conditions.length ? next : optional ? null : { op: "AND", conditions: [] });
   };
 
-  // A right-hand operand is either a reference name or a raw number. Numbers are
-  // stored as numbers, not strings, so the schema validates them as literals.
-  const operandValue = (v: unknown) => (typeof v === "number" ? String(v) : String(v ?? ""));
-  const parseOperand = (raw: string): string | number => {
+  // An operand is a reference name, a raw number, or an object (an inline
+  // indicator or an expression such as the 20-day high). Numbers are stored as
+  // numbers so the schema validates them as literals; objects are shown and
+  // edited as JSON, and kept as typed until they parse.
+  const operandValue = (v: unknown) =>
+    typeof v === "number" ? String(v) : v && typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
+  const parseOperand = (raw: string): unknown => {
+    const text = raw.trim();
+    if (text.startsWith("{")) {
+      try { return JSON.parse(text); } catch { return raw; }
+    }
     const n = Number(raw);
-    return raw.trim() !== "" && !Number.isNaN(n) ? n : raw;
+    return text !== "" && !Number.isNaN(n) ? n : raw;
   };
 
   return (
@@ -452,7 +459,11 @@ function ConditionPanel({
           </div>
 
           <div className="field" style={{ marginBottom: 6 }}>
-            <select className="mono" value={String(c.left)} onChange={(e) => setCondition(i, { left: e.target.value })}>
+            <select className="mono" value={operandValue(c.left)}
+              onChange={(e) => setCondition(i, { left: parseOperand(e.target.value) })}>
+              {typeof c.left === "object" && c.left && (
+                <option value={operandValue(c.left)}>{operandValue(c.left)}</option>
+              )}
               {options.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>

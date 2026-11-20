@@ -467,6 +467,59 @@ export interface Job<R = unknown> {
 
 export const TERMINAL_JOB: JobStatus[] = ["succeeded", "failed", "cancelled"];
 
+export type ScanStatus =
+  | "triggered_today" | "holding" | "lapsed" | "waiting" | "not_enough_data" | "no_data" | "error" | "ok";
+
+export interface ScanRow {
+  symbol: string;
+  key: string;
+  status: ScanStatus;
+  reason?: string;
+  as_of?: string;
+  close?: number;
+  active?: boolean;
+  distance_pct?: number | null;
+  since?: string | null;
+  since_close?: number | null;
+  since_capped?: boolean;
+  last_fired?: string | null;
+  last_fired_close?: number | null;
+  bars_since?: number | null;
+  stale?: boolean;
+  data?: { source: string; synthetic: boolean; first_bar: string; last_bar: string; bars: number };
+  events?: ScanEvent[];
+}
+
+export interface ScanEvent {
+  symbol?: string;
+  date: string;
+  close: number;
+  forward: Record<string, number | null>;
+}
+
+export interface ReturnStats { count: number; mean: number | null; median: number | null; hit_rate: number | null }
+
+export interface ScanResult {
+  mode: "now" | "history";
+  spec_hash: string;
+  name: string;
+  side: "long" | "short" | null;
+  universe: number;
+  counts: Partial<Record<ScanStatus, number>>;
+  notes: string[];
+  as_of?: string | null;
+  rows: ScanRow[];
+  events?: ScanEvent[];
+  summary?: Record<string, { signal: ReturnStats; baseline: ReturnStats }>;
+}
+
+export interface ScanValidation {
+  valid: boolean;
+  hash?: string;
+  universe?: number | null;
+  errors: { field: string; message: string }[];
+}
+
 export interface BuilderBacktestSettings {
   start?: string;
   end?: string;
@@ -563,6 +616,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  validateScan: (spec: unknown) =>
+    request<ScanValidation>("/api/scans/validate", { method: "POST", body: JSON.stringify(spec) }),
+
+  scan: (payload: { spec: unknown; mode: "now" | "history"; fetch?: boolean }) =>
+    request<Job<ScanResult>>("/api/jobs/scan", { method: "POST", body: JSON.stringify(payload) }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 
