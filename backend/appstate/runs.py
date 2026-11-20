@@ -42,12 +42,14 @@ def record(
     payload: dict[str, Any],
     strategy_id: str | None = None,
     job_id: str | None = None,
+    family: str | None = None,
 ) -> str:
-    """Store a finished run and return its id."""
+    """Store a finished run and return its id. `family` overrides the strategy family
+    (a portfolio has its own, backend/portfolio/spec.py)."""
     from backend.strategy.family import family_key
 
     run_id = new_id()
-    family = family_key(document)
+    family = family or family_key(document)
     blob = gzip.compress(to_json(payload).encode(), compresslevel=6)
     with transaction() as conn:
         conn.execute(
@@ -118,15 +120,15 @@ def list_runs(
     return [_summary(r) for r in rows]
 
 
-# Trials count kind "backtest" runs only: runs and sweep variants are what a
-# trader chooses between. Validation runs (walk-forward folds, slippage
+# Trials count kind "backtest" and "portfolio" runs: runs and sweep variants
+# are what a trader chooses between. Validation runs (walk-forward folds, slippage
 # stress, a second instrument) check a strategy already chosen.
 
 
 def trial_count(strategy_hash: str) -> int:
     """How many backtests this exact strategy has had."""
     return connection().execute(
-        "SELECT count(*) FROM runs WHERE strategy_hash = ? AND kind = 'backtest'", [strategy_hash]
+        "SELECT count(*) FROM runs WHERE strategy_hash = ? AND kind IN ('backtest', 'portfolio')", [strategy_hash]
     ).fetchone()[0]
 
 
@@ -138,7 +140,7 @@ def family_trials(family: str) -> dict[str, int]:
     rather than re-running the same thing.
     """
     row = connection().execute(
-        "SELECT count(*), count(DISTINCT strategy_hash) FROM runs WHERE family = ? AND kind = 'backtest'",
+        "SELECT count(*), count(DISTINCT strategy_hash) FROM runs WHERE family = ? AND kind IN ('backtest', 'portfolio')",
         [family],
     ).fetchone()
     return {"runs": row[0], "variants": row[1]}
@@ -153,7 +155,7 @@ def family_experiments(family: str) -> list[float | None]:
     """
     rows = connection().execute(
         """SELECT json_extract(metrics, '$.sharpe') AS sharpe, max(created_at)
-           FROM runs WHERE family = ? AND kind = 'backtest'
+           FROM runs WHERE family = ? AND kind IN ('backtest', 'portfolio')
            GROUP BY strategy_hash, json_extract(data, '$.fingerprint')""",
         [family],
     ).fetchall()

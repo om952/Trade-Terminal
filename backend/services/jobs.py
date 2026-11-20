@@ -260,6 +260,15 @@ class ValidateJob(ValidateParams):
     version: int | None = None
 
 
+def run_portfolio_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    from backend.portfolio import service as portfolio
+
+    out = portfolio.run(portfolio.PortfolioParams.model_validate(params), on_progress=ctx.progress, job_id=ctx.job_id)
+    # The full report lives with the run; the job keeps what a poll needs.
+    return {k: out.get(k) for k in ("run_id", "name", "metrics", "data", "notes", "holdings", "deflated",
+                                     "family_trials", "synthetic_data")} | {"rebalances": out["rebalances"][-12:]}
+
+
 # Jobs that can be run again from where they stopped: the cache's ledger skips
 # what is already downloaded, so a rerun is a resume.
 RESUMABLE = {"fetch", "prefetch"}
@@ -273,3 +282,4 @@ runner.register("scan_check", run_scan_check_job)
 runner.register("prefetch", run_prefetch_job)
 runner.register("final_test", run_final_test_job)
 runner.register("validate", run_validate_job)
+runner.register("portfolio", run_portfolio_job)

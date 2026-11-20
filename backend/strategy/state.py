@@ -34,6 +34,7 @@ class TradeReason(str, Enum):
     RISK_LIMIT = "risk_limit"
     SESSION_END = "session_end"
     MANUAL = "manual"
+    REBALANCE = "rebalance"       # a portfolio dropped the holding (backend/portfolio)
 
 
 @dataclass(slots=True)
