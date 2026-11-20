@@ -15,6 +15,8 @@ from backend.strategy.schema import (
     ConditionGroup,
     ExitRule,
     ExitType,
+    Expr,
+    ExprFn,
     InlineIndicator,
     Leg,
     LegKind,
@@ -39,7 +41,30 @@ def _timeframe(tf: str) -> str:
     return f"{n}-{unit} bars"
 
 
+_ARITH = {ExprFn.ADD: "+", ExprFn.SUB: "-", ExprFn.MUL: "x", ExprFn.DIV: "/"}
+
+
+def _ordinal(n: float) -> str:
+    n = round(n, 2)
+    text = f"{n:g}"
+    if not float(n).is_integer():
+        return f"{text}th"
+    k = int(n)
+    suffix = "th" if 10 <= k % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(k % 10, "th")
+    return f"{k}{suffix}"
+
+
 def _operand(value: Any) -> str:
+    if isinstance(value, Expr):
+        if value.fn is ExprFn.RANK:
+            return (f"the percentile rank (0 to 100) of {_operand(value.of)} "
+                    f"among the previous {value.window} bars")
+        if value.fn is ExprFn.QUANTILE:
+            return (f"the {_ordinal((value.q or 0) * 100)} percentile of {_operand(value.of)} "
+                    f"over the previous {value.window} bars")
+        assert value.args is not None
+        a, b = value.args
+        return f"({_operand(a)} {_ARITH[value.fn]} {_operand(b)})"
     if isinstance(value, InlineIndicator):
         params = ", ".join(f"{v}" for v in value.params.values())
         inner = f"{value.of}{', ' + params if params else ''}"
@@ -166,6 +191,21 @@ def render(strategy: Strategy) -> dict[str, Any]:
     sections.append({"heading": "Costs", "lines": [
         f"Slippage {s.costs.slippage_bps:g} bps per fill, brokerage model {s.costs.brokerage_model}",
     ]})
+    if s.sweep:
+        from backend.strategy import sweep as sweep_module
+
+        document = s.model_dump(mode="json")
+        lines = [
+            f"{sweep_module.path_label(axis.path, document)}: "
+            + ", ".join(f"{v:g}" for v in axis.values)
+            for axis in s.sweep
+        ]
+        total = sweep_module.count(s)
+        lines.append(
+            f"{total} combinations, each run as its own backtest and counted as a trial "
+            "of this idea; a single backtest uses the values written above"
+        )
+        sections.append({"heading": "Sweep", "lines": lines})
     return {"title": s.name, "summary": s.summary(), "sections": sections}
 
 

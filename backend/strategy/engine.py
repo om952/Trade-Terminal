@@ -132,6 +132,7 @@ class StrategyEngine:
         self._inline = conditions.collect_inline(strategy.entry) + conditions.collect_inline(
             strategy.exit
         )
+        self._exprs = strategy.all_exprs()
         self._current_day: date | None = None
         self._bar_index = -1
         self._pending: list[OrderIntent] = []
@@ -493,12 +494,14 @@ class StrategyEngine:
     # -- convenience: run over a DataFrame ------------------------------------
 
     def prepare_backtest(self, df: pd.DataFrame) -> VectorizedIndicatorSet:
-        indicators = VectorizedIndicatorSet(df, self.strategy.indicators, self._inline)
+        indicators = VectorizedIndicatorSet(
+            df, self.strategy.indicators, self._inline, self._exprs
+        )
         self._warmup = indicators.warmup_bars()
         return indicators
 
     def prepare_live(self) -> StreamingIndicatorSet:
-        return StreamingIndicatorSet(self.strategy.indicators, self._inline)
+        return StreamingIndicatorSet(self.strategy.indicators, self._inline, self._exprs)
 
 
 def bars_with_timestamps(df: pd.DataFrame) -> Iterator[tuple[int, datetime, PriceBar]]:

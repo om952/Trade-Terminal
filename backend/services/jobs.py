@@ -89,6 +89,65 @@ def run_backtest_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
     }
 
 
+SWEEP_METRICS = (
+    "total_trades", "net_pnl", "total_return_pct", "sharpe", "max_drawdown_pct",
+    "win_rate_pct", "profit_factor",
+)
+
+
+def run_sweep_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    """Run every variant of a strategy's sweep, recording each as a run.
+
+    No "best" variant is named. Picking the top row of a grid is exactly the
+    selection the family trial count exists to penalize, so the result reports
+    every row and the count, and leaves the choice (and its caveat) visible.
+    """
+    from backend.strategy import sweep
+    from backend.strategy.family import family_key
+
+    job = BacktestJob.model_validate(params)
+    document, strategy_id = resolve_document(job)
+    strategy = backtest_service.validate(document)
+    if not strategy.sweep:
+        raise ValueError("This strategy has no sweep: add one to vary its parameters.")
+
+    grid = sweep.variants(strategy)
+    base = job.model_dump(exclude={"strategy_id", "version", "strategy"})
+    rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for n, variant in enumerate(grid):
+        ctx.progress(n / len(grid), f"Variant {n + 1} of {len(grid)}: {variant.label}")
+        if variant.strategy is None:
+            skipped.append({"label": variant.label, "assignment": variant.assignment,
+                            "reason": variant.error})
+            continue
+        run_params = backtest_service.BacktestParams.model_validate({
+            **base, "include_chart": False,
+            "strategy": variant.strategy.model_dump(mode="json"),
+        })
+        payload = backtest_and_record(run_params, strategy_id=strategy_id, job_id=ctx.job_id)
+        rows.append({
+            "label": variant.label,
+            "assignment": variant.assignment,
+            "run_id": payload["run_id"],
+            "strategy_hash": payload["strategy_hash"],
+            "metrics": {k: payload["metrics"].get(k) for k in SWEEP_METRICS},
+        })
+
+    family = family_key(strategy)
+    ctx.progress(1.0, f"Sweep complete: {len(rows)} variants run")
+    return json.loads(to_json({
+        "family": family,
+        "family_trials": runs.family_trials(family),
+        "variants": rows,
+        "skipped": skipped,
+        "note": (
+            "Every variant is recorded as a trial of this strategy's family. "
+            "The best row of a grid is partly luck; the more rows, the more so."
+        ),
+    }))
+
+
 def run_fetch_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
     job = FetchJob.model_validate(params)
     key = backtest_service.resolve(job.symbol)
@@ -105,3 +164,4 @@ def run_fetch_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
 runner = JobRunner(workers=2)
 runner.register("backtest", run_backtest_job)
 runner.register("fetch", run_fetch_job)
+runner.register("sweep", run_sweep_job)

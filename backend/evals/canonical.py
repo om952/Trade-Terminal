@@ -21,6 +21,8 @@ from backend.strategy.schema import (
     Condition,
     ConditionGroup,
     ExitRule,
+    Expr,
+    ExprFn,
     InlineIndicator,
     Leg,
     Strategy,
@@ -56,6 +58,14 @@ def _default_output(type_name: str) -> str:
 
 
 def operand(strategy: Strategy, value: Any) -> str:
+    if isinstance(value, Expr):
+        if value.is_rolling:
+            q = f",q={_num(value.q)}" if value.q is not None else ""
+            return f"{value.fn.value}({operand(strategy, value.of)},window={value.window}{q})"
+        args = [operand(strategy, a) for a in value.args or ()]
+        if value.fn in (ExprFn.ADD, ExprFn.MUL):
+            args.sort()
+        return f"{value.fn.value}({','.join(args)})"
     if isinstance(value, InlineIndicator):
         params = dict(value.params)
         if "source" in registry.get(value.type).params:

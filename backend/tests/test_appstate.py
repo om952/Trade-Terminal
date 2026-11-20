@@ -245,6 +245,89 @@ def test_backtest_job_errors(api):
     assert job["status"] == "failed" and "No candles for SIM|NOTHERE" in job["error"]
 
 
+def _swept_doc():
+    document = _doc()
+    document.pop("schema_version")
+    document.pop("id")
+    document["sweep"] = [
+        {"path": "/indicators/0/params/period", "values": [5, 9, 13]},
+        {"path": "/legs/0/lots", "values": [1, 0]},          # lots 0 cannot run
+    ]
+    return document
+
+
+def test_sweep_job_runs_and_records_every_variant(api):
+    from backend.services.jobs import runner
+    from backend.strategy.family import family_key
+
+    document = _swept_doc()
+    sid = api.post("/api/strategies", json={"document": document}).json()["strategy_id"]
+    submitted = api.post("/api/jobs/sweep", json={"strategy_id": sid})
+    assert submitted.status_code == 202
+    job = runner.wait(submitted.json()["id"], timeout=120)
+    assert job["status"] == "succeeded", job
+    result = job["result"]
+
+    assert len(result["variants"]) == 3
+    assert [s["label"] for s in result["skipped"]] == [
+        f"ema_fast.period={p}, leg1.lots=0" for p in (5, 9, 13)
+    ]
+    assert all("lots" in s["reason"] for s in result["skipped"])
+    assert "best" not in result and "partly luck" in result["note"]
+
+    # Every variant is a recorded run of the same family, linked to the strategy.
+    family = family_key(document)
+    assert result["family"] == family
+    assert result["family_trials"] == {"runs": 3, "variants": 3}
+    for row in result["variants"]:
+        run = api.get(f"/api/runs/{row['run_id']}").json()
+        assert run["strategy_id"] == sid and run["job_id"] == job["id"]
+        assert run["result"]["metrics"]["total_trades"] == row["metrics"]["total_trades"]
+
+    # A variant's run equals a plain backtest of the same concrete document.
+    plain = _doc(fast=9)
+    plain.pop("id")
+    sync = api.post("/api/backtest", json=_backtest_body(plain)).json()
+    nine = next(r for r in result["variants"] if r["assignment"]["/indicators/0/params/period"] == 9)
+    assert sync["strategy_hash"] == nine["strategy_hash"]
+    assert sync["metrics"]["net_pnl"] == nine["metrics"]["net_pnl"]
+
+
+def test_sweep_job_errors(api):
+    plain = api.post("/api/jobs/sweep", json={"strategy": _doc()})
+    assert plain.status_code == 400 and "no sweep" in plain.json()["detail"]
+    too_big = _swept_doc()
+    too_big["sweep"] = [
+        {"path": "/indicators/0/params/period", "values": list(range(2, 52))},
+        {"path": "/indicators/1/params/period", "values": list(range(20, 25))},
+    ]
+    assert api.post("/api/jobs/sweep", json={"strategy": too_big}).status_code == 422
+
+
+def test_sweep_job_can_be_cancelled(api, monkeypatch):
+    from backend.services import jobs as job_module
+    from backend.services.jobs import runner
+
+    started = threading.Event()
+    release = threading.Event()
+    real = job_module.backtest_and_record
+
+    def slow(*args, **kwargs):
+        started.set()
+        release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(job_module, "backtest_and_record", slow)
+    job_id = api.post("/api/jobs/sweep", json={"strategy": _swept_doc()}).json()["id"]
+    assert started.wait(10)
+    api.post(f"/api/jobs/{job_id}/cancel")
+    release.set()
+    job = runner.wait(job_id, timeout=60)
+    assert job["status"] == "cancelled", job
+    # Only the variant in flight when the cancel arrived was recorded.
+    assert len(api.get("/api/runs?limit=50").json()["runs"]) == 1
+
+
 def test_fetch_job_refuses_without_a_broker(api):
     assert api.post("/api/jobs/fetch", json={"symbol": "SIM|APPSTATE"}).status_code == 400
     from backend.services.jobs import runner

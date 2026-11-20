@@ -552,6 +552,17 @@ def jobs_backtest(req: job_services.BacktestJob) -> dict:
         return job_runner.submit("backtest", req.model_dump(mode="json"))
 
 
+@app.post("/api/jobs/sweep", status_code=202)
+def jobs_sweep(req: job_services.BacktestJob) -> dict:
+    """Queue every variant of a strategy's `sweep` as recorded backtests."""
+    with _service_errors():
+        document, _ = job_services.resolve_document(req)
+        strategy = backtest_service.validate(document)
+        if not strategy.sweep:
+            raise HTTPException(400, "This strategy has no sweep: add one to vary its parameters.")
+        return job_runner.submit("sweep", req.model_dump(mode="json"))
+
+
 @app.post("/api/jobs/fetch", status_code=202)
 def jobs_fetch(req: job_services.FetchJob) -> dict:
     """Queue a download into the cache, with progress."""

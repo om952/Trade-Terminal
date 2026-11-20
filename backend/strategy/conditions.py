@@ -19,12 +19,14 @@ from __future__ import annotations
 import math
 from typing import Union
 
-from backend.strategy.indicator_set import IndicatorSet, inline_key
+from backend.strategy.indicator_set import IndicatorSet, expr_key, inline_key
 from backend.strategy.schema import (
     BoolOp,
     Comparator,
     Condition,
     ConditionGroup,
+    Expr,
+    ExprFn,
     InlineIndicator,
     Operand,
 )
@@ -32,11 +34,32 @@ from backend.strategy.schema import (
 # Floating-point equality on prices is meaningless; treat near-equal as equal.
 EPSILON = 1e-9
 
+NAN = float("nan")
+
+
+def _arithmetic(fn: ExprFn, a: float, b: float) -> float:
+    if math.isnan(a) or math.isnan(b):
+        return NAN
+    if fn is ExprFn.ADD:
+        return a + b
+    if fn is ExprFn.SUB:
+        return a - b
+    if fn is ExprFn.MUL:
+        return a * b
+    return a / b if b != 0 else NAN       # a zero divisor has no meaningful threshold
+
 
 def _operand_value(operand: Operand, indicators: IndicatorSet, previous: bool = False) -> float:
     """Resolve an operand to a number for the current (or previous) bar."""
     if isinstance(operand, (int, float)):
         return float(operand)
+
+    if isinstance(operand, Expr):
+        if operand.is_rolling:
+            key = expr_key(operand)
+            return indicators.previous(key) if previous else indicators.value(key)
+        a, b = (_operand_value(x, indicators, previous) for x in operand.args or ())
+        return _arithmetic(operand.fn, a, b)
 
     if isinstance(operand, InlineIndicator):
         key = inline_key(operand)
@@ -138,22 +161,50 @@ def explain(node: Union[Condition, ConditionGroup], indicators: IndicatorSet) ->
     }
 
 
+_SYMBOL = {ExprFn.ADD: "+", ExprFn.SUB: "-", ExprFn.MUL: "*", ExprFn.DIV: "/"}
+
+
 def _describe(operand: Operand) -> str:
     if isinstance(operand, InlineIndicator):
         params = ", ".join(f"{k}={v}" for k, v in sorted(operand.params.items()))
         return f"{operand.type}({operand.of}{', ' + params if params else ''})"
+    if isinstance(operand, Expr):
+        if operand.fn is ExprFn.RANK:
+            return f"rank({_describe(operand.of)}, {operand.window})"   # type: ignore[arg-type]
+        if operand.fn is ExprFn.QUANTILE:
+            return f"quantile({_describe(operand.of)}, {operand.window}, q={operand.q})"  # type: ignore[arg-type]
+        assert operand.args is not None
+        a, b = operand.args
+        return f"({_describe(a)} {_SYMBOL[operand.fn]} {_describe(b)})"
     return str(operand)
 
 
+def _operand_inline(operand: object) -> list[InlineIndicator]:
+    if isinstance(operand, InlineIndicator):
+        return [operand]
+    if isinstance(operand, Expr):
+        out: list[InlineIndicator] = []
+        for child in (operand.of, *(operand.args or ())):
+            out.extend(_operand_inline(child))
+        return out
+    return []
+
+
 def collect_inline(node: Union[Condition, ConditionGroup, None]) -> list[InlineIndicator]:
-    """Find every inline indicator in a tree so the IndicatorSet can prepare them."""
+    """Find every inline indicator in a tree, including inside expressions,
+    so the IndicatorSet can prepare them."""
     if node is None:
         return []
 
     if isinstance(node, Condition):
-        return [op for op in (node.left, node.right) if isinstance(op, InlineIndicator)]
+        return _operand_inline(node.left) + _operand_inline(node.right)
 
     out: list[InlineIndicator] = []
     for child in node.conditions:
         out.extend(collect_inline(child))
     return out
+
+
+def collect_exprs(node: Union[Condition, ConditionGroup, None]) -> list[Expr]:
+    """Every expression in a tree, so the IndicatorSet can prepare rolling ones."""
+    return [] if node is None else node.exprs()

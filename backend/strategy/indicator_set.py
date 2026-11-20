@@ -22,15 +22,21 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 from backend.indicators import registry
 from backend.indicators.base import PriceBar, source_value
-from backend.strategy.schema import IndicatorSpec, InlineIndicator
+from backend.strategy.schema import Expr, ExprFn, IndicatorSpec, InlineIndicator
 
 NAN = float("nan")
+
+# Rows of a rolling window evaluated at once; bounds memory for long windows.
+_CHUNK_CELLS = 2_000_000
 
 
 def _resolve_key(ref: str) -> tuple[str, str | None]:
@@ -45,6 +51,74 @@ def inline_key(spec: InlineIndicator) -> str:
     """Deterministic name for an inline indicator, so identical ones share state."""
     params = ",".join(f"{k}={v}" for k, v in sorted(spec.params.items()))
     return f"__inline_{spec.type.lower()}_{spec.of}_{params}".replace(" ", "")
+
+
+def source_key(source: str | InlineIndicator) -> str:
+    """The value-space key of a rolling expression's source."""
+    return inline_key(source) if isinstance(source, InlineIndicator) else source
+
+
+def expr_key(expr: Expr) -> str:
+    """Deterministic name for a rolling expression's own column."""
+    assert expr.of is not None
+    q = f"_q={expr.q!r}" if expr.q is not None else ""
+    return f"__expr_{expr.fn.value}_{source_key(expr.of)}_w={expr.window}{q}"
+
+
+def _rank(windows: np.ndarray, current: np.ndarray) -> np.ndarray:
+    return 100.0 * np.count_nonzero(windows < current[:, None], axis=1) / windows.shape[1]
+
+
+def rolling_series(values: np.ndarray, expr: Expr) -> np.ndarray:
+    """A rolling expression over a whole column, bar i using bars i-window..i-1.
+
+    The streaming path computes the same thing one bar at a time with
+    `rolling_value`; both go through `_rank` and `np.quantile` on identical
+    windows, which is what keeps backtest and live in agreement.
+    """
+    window = int(expr.window or 0)
+    n = len(values)
+    out = np.full(n, np.nan)
+    if n <= window:
+        return out
+    windows = sliding_window_view(values[:-1], window)      # row j covers bars j..j+window-1
+    current = values[window:]                                # bar j+window
+    step = max(1, _CHUNK_CELLS // window)
+    for lo in range(0, len(current), step):
+        hi = min(lo + step, len(current))
+        block, now = windows[lo:hi], current[lo:hi]
+        if expr.fn is ExprFn.RANK:
+            result = _rank(block, now)
+            bad = np.isnan(block).any(axis=1) | np.isnan(now)
+        else:
+            result = np.quantile(block, float(expr.q or 0.0), axis=1)
+            bad = np.isnan(block).any(axis=1)
+        result[bad] = np.nan
+        out[window + lo: window + hi] = result
+    return out
+
+
+def rolling_value(history: deque[float], current: float, expr: Expr) -> float:
+    """One bar of `rolling_series`, from the previous `window` values."""
+    window = int(expr.window or 0)
+    if len(history) < window:
+        return NAN
+    block = np.asarray(history, dtype="float64")
+    if np.isnan(block).any():
+        return NAN
+    if expr.fn is ExprFn.RANK:
+        if math.isnan(current):
+            return NAN
+        return float(_rank(block[None, :], np.asarray([current]))[0])
+    return float(np.quantile(block, float(expr.q or 0.0)))
+
+
+def _unique_rolling(exprs: list[Expr] | None) -> list[Expr]:
+    seen: dict[str, Expr] = {}
+    for expr in exprs or []:
+        if expr.is_rolling:
+            seen.setdefault(expr_key(expr), expr)
+    return list(seen.values())
 
 
 class IndicatorSet(ABC):
@@ -90,6 +164,7 @@ class VectorizedIndicatorSet(IndicatorSet):
         df: pd.DataFrame,
         specs: list[IndicatorSpec],
         inline: list[InlineIndicator] | None = None,
+        exprs: list[Expr] | None = None,
     ) -> None:
         self._df = df.reset_index(drop=True)
         self._columns: dict[str, pd.Series] = {}
@@ -118,6 +193,15 @@ class VectorizedIndicatorSet(IndicatorSet):
             result = registry.compute(spec.type, self._source_frame(spec.of), **spec.params)
             series = result if isinstance(result, pd.Series) else result[result.columns[0]]
             self._columns[key] = series.astype("float64")
+
+        for expr in _unique_rolling(exprs):
+            assert expr.of is not None
+            source = self._columns.get(source_key(expr.of))
+            values = (
+                source.to_numpy(dtype="float64") if source is not None
+                else np.full(len(self._df), np.nan)
+            )
+            self._columns[expr_key(expr)] = pd.Series(rolling_series(values, expr))
 
     def _source_frame(self, source: str) -> pd.DataFrame:
         """A frame whose OHLC all carry `source`, for indicators over non-price data.
@@ -213,7 +297,12 @@ class StreamingIndicatorSet(IndicatorSet):
         self,
         specs: list[IndicatorSpec],
         inline: list[InlineIndicator] | None = None,
+        exprs: list[Expr] | None = None,
     ) -> None:
+        self._rolling = _unique_rolling(exprs)
+        self._history: dict[str, deque[float]] = {
+            expr_key(e): deque(maxlen=int(e.window or 0)) for e in self._rolling
+        }
         self._indicators: dict[str, Any] = {}
         self._outputs: dict[str, tuple[str, ...]] = {}
         self._inline_source: dict[str, str] = {}
@@ -267,6 +356,15 @@ class StreamingIndicatorSet(IndicatorSet):
                 current[key] = float(result.get(outputs[0], NAN)) if outputs else NAN
             else:
                 current[key] = float(result)
+
+        # Rolling expressions read their source after it has updated, then
+        # remember it: the window always holds the bars before this one.
+        for expr in self._rolling:
+            assert expr.of is not None
+            key = expr_key(expr)
+            value = current.get(source_key(expr.of), NAN)
+            current[key] = rolling_value(self._history[key], value, expr)
+            self._history[key].append(value)
 
         self._current = current
 
