@@ -39,6 +39,7 @@ from backend.data import instruments as inst
 from backend.data.store import all_coverage, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
+from backend.research import service as research
 from backend.scan import service as scan_service
 from backend.services import backtest as backtest_service
 from backend.services import jobs as job_services
@@ -583,6 +584,44 @@ def jobs_validate(req: job_services.ValidateJob) -> dict:
         document, _ = job_services.resolve_document(req)
         backtest_service.validate(document)
         return job_runner.submit("validate", req.model_dump(mode="json"))
+
+
+@contextmanager
+def _research_errors():
+    try:
+        yield
+    except research.SessionNotFound as exc:
+        raise HTTPException(404, f"No research session {exc.args[0]}") from exc
+    except research.TurnInProgress as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except research.InvalidReply as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/research", status_code=202)
+def research_start(req: research.StartRequest) -> dict:
+    """Start a research run on a strategy: the model proposes structural variants, and the
+    plan and its cost wait for approval before anything is backtested."""
+    with _research_errors(), _service_errors():
+        return research.start(req)
+
+
+@app.get("/api/research")
+def research_list(limit: int = 50) -> dict:
+    return {"sessions": research.list_sessions(limit)}
+
+
+@app.get("/api/research/{session_id}")
+def research_get(session_id: str) -> dict:
+    with _research_errors():
+        return research.view(session_id)
+
+
+@app.post("/api/research/{session_id}/reply", status_code=202)
+def research_reply(session_id: str, payload: dict[str, Any]) -> dict:
+    """Approve or reject the plan ({action, drop}), or choose survivors to keep ({keep})."""
+    with _research_errors():
+        return research.reply(session_id, payload)
 
 
 @app.get("/api/holdout")
