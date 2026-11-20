@@ -202,8 +202,15 @@ def run_scan_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
     return scan_service.run(scan_service.ScanParams.model_validate(params), on_progress=ctx.progress)
 
 
+def run_scan_check_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    from backend.scan import alerts
+
+    return alerts.check(params["scan_id"], job_id=ctx.job_id, on_progress=ctx.progress)
+
+
 runner = JobRunner(workers=2)
 runner.register("backtest", run_backtest_job)
 runner.register("fetch", run_fetch_job)
 runner.register("sweep", run_sweep_job)
 runner.register("scan", run_scan_job)
+runner.register("scan_check", run_scan_check_job)

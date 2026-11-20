@@ -520,6 +520,47 @@ export interface ScanValidation {
   errors: { field: string; message: string }[];
 }
 
+export interface SavedScan {
+  id: string;
+  name: string;
+  version: number;
+  hash: string;
+  alerts: boolean;
+  archived: boolean;
+  last_checked_at: string | null;
+  created_at: string;
+  updated_at: string;
+  document?: Record<string, unknown>;
+}
+
+export interface ScanEventRow {
+  id: number;
+  as_of: string | null;
+  symbol: string;
+  key: string;
+  kind: "triggered" | "back_inside";
+  detail: { status?: string; since?: string | null; close?: number | null; distance_pct?: number | null };
+  created_at: string;
+}
+
+export interface SavedScanDetail extends SavedScan {
+  document: Record<string, unknown>;
+  events: ScanEventRow[];
+  last_snapshot: { id: number; version: number; as_of: string | null; created_at: string } | null;
+}
+
+export interface ScanCheckResult {
+  scan_id: string;
+  as_of: string | null;
+  new_session?: boolean;
+  baseline?: boolean;
+  scanned: number;
+  active: number;
+  events: { symbol: string; kind: string }[];
+  sent: boolean;
+  message?: string;
+}
+
 export interface BuilderBacktestSettings {
   start?: string;
   end?: string;
@@ -622,6 +663,23 @@ export const api = {
 
   scan: (payload: { spec: unknown; mode: "now" | "history"; fetch?: boolean }) =>
     request<Job<ScanResult>>("/api/jobs/scan", { method: "POST", body: JSON.stringify(payload) }),
+
+  savedScans: () =>
+    request<{ scans: SavedScan[]; alert_times: string; telegram: boolean }>("/api/scans"),
+
+  savedScan: (id: string) => request<SavedScanDetail>(`/api/scans/${encodeURIComponent(id)}`),
+
+  saveScan: (document: unknown, id?: string, alerts?: boolean) =>
+    request<SavedScan & { new_version?: boolean }>(id ? `/api/scans/${encodeURIComponent(id)}` : "/api/scans", {
+      method: id ? "PUT" : "POST",
+      body: JSON.stringify({ document, ...(alerts === undefined ? {} : { alerts }) }),
+    }),
+
+  archiveScan: (id: string) =>
+    request<{ id: string; archived: boolean }>(`/api/scans/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  checkScan: (id: string) =>
+    request<Job<ScanCheckResult>>(`/api/scans/${encodeURIComponent(id)}/check`, { method: "POST" }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

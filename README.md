@@ -273,6 +273,12 @@ A scan runs one condition tree across many instruments on daily bars:
 condition began to hold and how far price is from the line; *history* reports
 every onset with forward returns next to a buy-and-hold baseline.
 
+Save a scan (`POST /api/scans`) and turn its alert on to have it checked at
+`SCAN_ALERT_TIMES` (default `08:45` IST, on the previous session's close).
+Each check reports only the stocks that started or stopped meeting the
+condition, to Telegram if `TELEGRAM_CHAT_ID` and the bot token are set, and
+in the Screener's Saved scans panel either way.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash

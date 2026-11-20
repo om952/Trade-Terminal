@@ -65,6 +65,7 @@ export default function App() {
   const sweeping = sweepJob != null && !TERMINAL_JOB.includes(sweepJob.status);
   const [scanSpec, setScanSpec] = useState<Record<string, any>>(BLANK_SCAN);
   const [scanJob, setScanJob] = useState<Job<ScanResult> | null>(null);
+  const [savedScanId, setSavedScanId] = useState<string | null>(null);
   const scanning = scanJob != null && !TERMINAL_JOB.includes(scanJob.status);
   useJobPoll(scanJob, setScanJob, setError);
 
@@ -318,7 +319,7 @@ export default function App() {
 
           {panel === "screener" && (
             <ScreenerPanel spec={scanSpec} setSpec={setScanSpec} catalogue={indicators}
-              running={scanning} onRun={runScan} />
+              running={scanning} onRun={runScan} savedId={savedScanId} setSavedId={setSavedScanId} />
           )}
 
           {panel === "builder" && <>

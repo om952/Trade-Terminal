@@ -97,8 +97,18 @@ async def lifespan(_: FastAPI):
     from backend.ops import backup
 
     threading.Thread(target=backup.create_if_due, name="backup", daemon=True).start()
+    # Saved scans with alerts on are checked at SCAN_ALERT_TIMES.
+    scheduler = None
+    if settings.scan_alerts_enabled:
+        from backend.scan.alerts import Scheduler
+
+        scheduler = Scheduler(job_runner.submit)
+        scheduler.start()
 
     yield
+
+    if scheduler is not None:
+        scheduler.stop()
 
     await run_in_threadpool(job_runner.shutdown)
 
@@ -160,12 +170,13 @@ def _service_errors():
     from backend.appstate.jobs import JobNotFound, UnknownJobKind
     from backend.appstate.runs import RunNotFound
     from backend.appstate.strategies import StrategyNotFound
+    from backend.scan.saved import ScanNotFound
 
     try:
         yield
     except HTTPException:
         raise
-    except (StrategyNotFound, RunNotFound, JobNotFound) as exc:
+    except (StrategyNotFound, RunNotFound, JobNotFound, ScanNotFound) as exc:
         raise HTTPException(404, f"Not found: {exc.args[0] if exc.args else exc}") from exc
     except UnknownJobKind as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -585,6 +596,78 @@ def scans_validate(document: dict[str, Any]) -> dict:
     return {"valid": problem is None, "hash": spec.content_hash(), "universe": size,
             "errors": [] if problem is None else [{"field": "universe", "message": problem}],
             "document": spec.model_dump(mode="json")}
+
+
+class SaveScanRequest(BaseModel):
+    document: dict[str, Any]
+    alerts: bool | None = None
+
+
+@app.get("/api/scans")
+def scans_list(include_archived: bool = False) -> dict:
+    from backend.scan import saved
+
+    return {"scans": saved.list_all(include_archived),
+            "alert_times": settings.scan_alert_times, "telegram": _telegram_configured()}
+
+
+@app.post("/api/scans", status_code=201)
+def scans_create(req: SaveScanRequest) -> dict:
+    from backend.scan import saved
+
+    with _service_errors():
+        scan, _ = saved.save(req.document, alerts=req.alerts)
+    return scan
+
+
+@app.get("/api/scans/{scan_id}")
+def scans_get(scan_id: str, events: int = 50) -> dict:
+    from backend.scan import saved
+
+    with _service_errors():
+        scan = saved.get(scan_id)
+        snapshot = saved.latest_snapshot(scan_id)
+    return {**scan, "events": saved.events(scan_id, events),
+            "last_snapshot": None if snapshot is None else
+            {k: snapshot[k] for k in ("id", "version", "as_of", "created_at")}}
+
+
+@app.put("/api/scans/{scan_id}")
+def scans_update(scan_id: str, req: SaveScanRequest) -> dict:
+    from backend.scan import saved
+
+    with _service_errors():
+        scan, created = saved.save(req.document, scan_id=scan_id, alerts=req.alerts)
+    return {**scan, "new_version": created}
+
+
+@app.delete("/api/scans/{scan_id}")
+def scans_archive(scan_id: str) -> dict:
+    """Archive: hidden, alerts off; versions, snapshots and events kept."""
+    from backend.scan import saved
+
+    with _service_errors():
+        saved.archive(scan_id)
+    return {"id": scan_id, "archived": True}
+
+
+@app.post("/api/scans/{scan_id}/check", status_code=202)
+def scans_check(scan_id: str) -> dict:
+    """Run an alert check now, as the schedule would. Poll the job for the result."""
+    from backend.scan import saved
+
+    with _service_errors():
+        saved.get(scan_id)
+        return job_runner.submit("scan_check", {"scan_id": scan_id})
+
+
+def _telegram_configured() -> bool:
+    from backend.core import credentials
+
+    try:
+        return bool(credentials.get("telegram_bot_token") and settings.telegram_chat_id.strip())
+    except Exception:  # noqa: BLE001 - a keychain problem means "not configured" here
+        return False
 
 
 @app.post("/api/jobs/scan", status_code=202)
