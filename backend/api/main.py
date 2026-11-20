@@ -624,6 +624,38 @@ def research_reply(session_id: str, payload: dict[str, Any]) -> dict:
         return research.reply(session_id, payload)
 
 
+@app.post("/api/portfolio/validate")
+def portfolio_validate(document: dict[str, Any]) -> dict:
+    """Check a portfolio spec, and say how many instruments its universe holds."""
+    from backend.portfolio import service as portfolio
+    from backend.scan.service import resolve_universe
+
+    try:
+        spec = portfolio.validate(document)
+    except portfolio.InvalidPortfolio as exc:
+        return {"valid": False, "errors": exc.errors}
+    try:
+        size: int | None = len(resolve_universe(spec.universe))
+    except ValueError as exc:
+        return {"valid": False, "errors": [{"field": "universe", "message": str(exc)}]}
+    return {"valid": True, "hash": spec.content_hash(), "family": spec.family(), "universe": size,
+            "document": spec.model_dump(mode="json")}
+
+
+@app.post("/api/jobs/portfolio", status_code=202)
+def jobs_portfolio(req: dict[str, Any]) -> dict:
+    """Backtest a portfolio (rank, hold the top N, rebalance). Poll the job; the run is recorded."""
+    from backend.portfolio import service as portfolio
+
+    with _service_errors():
+        params = portfolio.PortfolioParams.model_validate(req)
+        try:
+            portfolio.validate(params.spec)
+        except portfolio.InvalidPortfolio as exc:
+            raise HTTPException(422, {"errors": exc.errors}) from exc
+        return job_runner.submit("portfolio", params.model_dump(mode="json"))
+
+
 @app.get("/api/holdout")
 def holdout_status() -> dict:
     """Where the final holdout starts, and how many ideas have had their one look."""

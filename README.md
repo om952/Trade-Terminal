@@ -314,6 +314,16 @@ walk-forward and slippage runs if it clears that bar; reply with
 `{"keep": [ids]}` to save survivors. Outcomes are remembered per instrument and
 market regime, so failed ideas are not proposed again.
 
+### Portfolio strategies
+
+`POST /api/jobs/portfolio` backtests a rotation: rank a universe on daily bars
+by any indicator or expression (`"rank_by": "mom"` with
+`{"id": "mom", "type": "ROC", "params": {"period": 126}}`), keep the top
+`hold` that pass an optional `filter`, rebalance `weekly` or `monthly`, and
+hold cash while an optional `regime` condition on a benchmark is false.
+Decisions use each session's close and fill at the next open. The same engine
+runs on the paper path; a test checks they agree trade for trade.
+
 ### Using it from Claude Desktop (MCP)
 
 `trade-terminal mcp` serves the platform's tools over MCP (stdio) for Claude
