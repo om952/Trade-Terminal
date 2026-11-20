@@ -182,3 +182,28 @@ def test_final_test_api(env):
         assert plain["holdout"]["note"] and pd.Timestamp(plain["data"]["last_bar"]).date() < HELD
     finally:
         runner.shutdown(timeout=10)
+
+
+def test_scan_history_stops_before_the_holdout_and_scan_now_does_not(env):
+    """A scan's history mode measures a signal, so it may not read held-out sessions."""
+    from backend.scan import service as scan
+
+    spec = {"name": "Above the 20-day average", "universe": {"symbols": [REAL, "SIM|HOLD"]},
+            "indicators": [{"id": "sma20", "type": "SMA", "params": {"period": 20}}],
+            "condition": {"op": "AND", "conditions": [{"left": "close", "cmp": ">", "right": "sma20"}]}}
+    history = scan.run(scan.ScanParams(spec=spec, mode="history", fetch=False))
+    rows = {r["key"]: r for r in history["rows"]}
+    assert pd.Timestamp(rows[REAL]["data"]["last_bar"]).date() < HELD
+    assert all(e["date"] < HELD.isoformat() for e in history["events"] if e["symbol"] == REAL)
+    assert pd.Timestamp(rows["SIM|HOLD"]["data"]["last_bar"]).date() > HELD, "synthetic data is exempt"
+    assert history["holdout"]["start"] == HELD.isoformat()
+    assert any("held out" in n and "this history ends" in n for n in history["notes"])
+
+    inside = scan.run(scan.ScanParams(spec=spec, mode="history", start=date(2026, 6, 1), fetch=False))
+    real = next(r for r in inside["rows"] if r["key"] == REAL)
+    assert real["status"] == "error" and "held out" in real["reason"]
+
+    now = scan.run(scan.ScanParams(spec=spec, mode="now", fetch=False))
+    real_now = next(r for r in now["rows"] if r["key"] == REAL)
+    assert pd.Timestamp(real_now["data"]["last_bar"]).date() > HELD, "today's status reads today's bars"
+    assert "holdout" not in now

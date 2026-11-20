@@ -112,6 +112,9 @@ async def lifespan(_: FastAPI):
         scheduler.stop()
 
     await run_in_threadpool(job_runner.shutdown)
+    from backend.services import pool
+
+    await run_in_threadpool(pool.shutdown)
 
     # Stop sessions before the process goes away, so each journal gets its end
     # record instead of looking like a crash on the next start.

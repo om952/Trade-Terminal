@@ -112,8 +112,8 @@ def test_neighbourhood_tells_a_plateau_from_a_spike():
 
 def test_breakeven_slippage_is_interpolated():
     class Fake:
-        def run(self, document, label, slippage_bps):
-            return {"run_id": label, "metrics": {"net_pnl": 1000 - 100 * slippage_bps}}
+        def run_many(self, items):
+            return [{"run_id": label, "metrics": {"net_pnl": 1000 - 100 * o["slippage_bps"]}} for _, label, o in items]
 
     out = validate.slippage_stress(Fake(), {}, 5.0, [1, 2, 3])        # 500, 0, -500
     assert out["breakeven_bps"] == pytest.approx(10.0) and not out["survives_all"]

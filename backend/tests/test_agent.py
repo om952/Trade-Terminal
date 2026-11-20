@@ -583,11 +583,13 @@ def test_a_builder_sweep_equals_the_sweep_job(env):
 def test_a_builder_sweep_reports_progress_and_can_be_cancelled(env, monkeypatch):
     import threading
 
-    from backend.services import jobs as job_module
+    from backend.core.config import settings
+    from backend.services import pool
     from backend.services.jobs import runner
 
     started, release = threading.Event(), threading.Event()
-    real = job_module.backtest_and_record
+    real = pool._seeded_compute
+    monkeypatch.setattr(settings, "backtest_workers", 1)     # in this process, where the hook can hold it
 
     def slow(*args, **kwargs):
         started.set()
@@ -599,7 +601,7 @@ def test_a_builder_sweep_reports_progress_and_can_be_cancelled(env, monkeypatch)
     monkeypatch.setattr(job_runner_module, "PROGRESS_INTERVAL_S", 0.0)   # every write lands
     env.script += [ready(_swept())]
     view = _start()
-    monkeypatch.setattr(job_module, "backtest_and_record", slow)
+    monkeypatch.setattr(pool, "_seeded_compute", slow)
     agent.reply(view["id"], {"action": "approve"})
     assert started.wait(10)
     working = agent.view(view["id"])

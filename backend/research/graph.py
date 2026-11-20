@@ -210,14 +210,19 @@ def make_nodes(get_llm: Callable[[], LLMClient]):
 
     def evaluate_node(task: dict[str, Any]) -> dict[str, Any]:
         from backend.services import backtest
-        from backend.services.jobs import backtest_and_record
+        from backend.services.jobs import backtests_and_record
 
         candidate, settings_ = task["candidate"], task["settings"]
         out = {"id": candidate["id"], "hypothesis": candidate["hypothesis"], "family": candidate["family"],
                "document": candidate["document"]}
+        # Candidates fan out on threads (Send); the engine work goes to the
+        # process pool, so they run on separate cores (backend/services/pool.py).
         try:
-            payload = backtest_and_record(backtest.BacktestParams.model_validate(
-                {**settings_, "strategy": candidate["document"], "include_chart": False}))
+            [payload] = backtests_and_record([backtest.BacktestParams.model_validate(
+                {**settings_, "strategy": candidate["document"], "include_chart": False})],
+                labels=[candidate["id"]], noun="Candidate")
+            if isinstance(payload, Exception):
+                raise payload
         except Exception as exc:  # noqa: BLE001 - one candidate must not end the run
             return {"evaluations": [{**out, "error": str(exc)}]}
         return {"evaluations": [{**out, "run_id": payload["run_id"], "metrics": _metrics_subset(payload)}]}
