@@ -105,8 +105,13 @@ def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str
     """
     strategy = validate(req.strategy)
     symbol = req.symbol or strategy.instrument.symbol
+    # Real market data stops before the final holdout (backend/services/holdout.py),
+    # except in the one final test a strategy family is allowed.
+    from backend.services import holdout
+
+    first, last, held = holdout.bounds(resolve(symbol), req.start, req.end)
     bars = load_bars(
-        symbol, strategy.timeframe, req.start, req.end,
+        symbol, strategy.timeframe, first, last,
         on_progress=_scaled(on_progress, 0.0, DATA_SHARE),
     )
     df = bars.frame
@@ -168,6 +173,7 @@ def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str
         "equity_curve": equity_payload(result.equity_curve),
         "costs": cost_context(segment, req.lot_size, df),
         "blocked_reasons": blocked_summary(result),
+        "holdout": held,
     }
 
     if req.include_chart:

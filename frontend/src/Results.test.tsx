@@ -23,3 +23,30 @@ describe("LuckPanel", () => {
     expect(screen.getAllByText("–").length).toBe(2);
   });
 });
+
+describe("HoldoutNotice", () => {
+  it("says where the data was cut and offers the one final test", async () => {
+    const { HoldoutNotice } = await import("./Results");
+    let ran = 0;
+    render(<HoldoutNotice holdout={{ start: "2026-05-01", final: false,
+      note: "Data from 2026-05-01 is held out for one final test per idea, so this backtest ends on 2026-04-30." }}
+      onFinalTest={() => { ran += 1; }} />);
+    expect(screen.getByText("Held out from 2026-05-01")).toBeTruthy();
+    screen.getByText("Run the final test").click();
+    expect(ran).toBe(1);
+  });
+
+  it("marks a final test as the idea's one look", async () => {
+    const { HoldoutNotice } = await import("./Results");
+    render(<HoldoutNotice holdout={{ start: "2026-05-01", final: true, note: "Final test." }} />);
+    expect(screen.getByText("Final test on held-out data")).toBeTruthy();
+    expect(screen.getByText(/do not retune and test again/)).toBeTruthy();
+    expect(screen.queryByText("Run the final test")).toBeNull();
+  });
+
+  it("shows nothing when the run ended before the holdout anyway", async () => {
+    const { HoldoutNotice } = await import("./Results");
+    const { container } = render(<HoldoutNotice holdout={{ start: "2026-05-01", final: false, note: null }} />);
+    expect(container.textContent).toBe("");
+  });
+});

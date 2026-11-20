@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     # before the open and reports on the previous close.
     scan_alert_times: str = "08:45"
     scan_alerts_enabled: bool = True
+    # The final holdout (P4.2): the most recent HOLDOUT_MONTHS of real market
+    # data, fixed the first time it is used, are kept out of every ordinary
+    # backtest; each strategy family may test on them once. 0 turns it off.
+    holdout_months: int = Field(default=6, ge=0, le=60)
 
     # --- Runtime ---
     mode: Mode = Mode.BACKTEST
