@@ -11,6 +11,7 @@ import { ChartTab, PerformanceTab, TradeLogTab } from "./Results";
 import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./Live";
 import { SweepTable, sweepCount } from "./Sweep";
 import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
+import { ValidationView, type RobustnessResult, type ValidateOptions } from "./Validation";
 
 const BLANK_STRATEGY = {
   name: "New Strategy",
@@ -27,7 +28,7 @@ const BLANK_STRATEGY = {
   risk: { max_concurrent_positions: 1 },
 };
 
-type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "live";
+type Tab = "chart" | "performance" | "trades" | "sweep" | "scan" | "validation" | "live";
 
 const SWEEP_POLL_MS = 1000;
 type Panel = "assistant" | "builder" | "screener" | "library";
@@ -101,6 +102,29 @@ export default function App() {
       const err = e as ApiError;
       const detail = err.detail as { message?: string; run_id?: string } | undefined;
       setError(detail?.message ? `${detail.message} (run ${detail.run_id ?? "still running"})` : err.message);
+    }
+  };
+
+  // Robustness checks of the strategy in the editor (backend/services/validate.py).
+  const [validateJob, setValidateJob] = useState<Job<RobustnessResult> | null>(null);
+  const validating = validateJob != null && !TERMINAL_JOB.includes(validateJob.status);
+  useJobPoll(validateJob, setValidateJob, setError);
+
+  const runValidate = async (options: ValidateOptions) => {
+    setError(null);
+    try {
+      setValidateJob(await api.checkRobustness({
+        strategy: doc,
+        symbol: runConfig.symbol || undefined,
+        starting_capital: runConfig.starting_capital,
+        lot_size: runConfig.lot_size,
+        slippage_bps: runConfig.slippage_bps,
+        max_leverage: runConfig.max_leverage,
+        ...options,
+      }));
+      setTab("validation");
+    } catch (e) {
+      setError((e as ApiError).message || "Checks did not start");
     }
   };
 
@@ -395,14 +419,14 @@ export default function App() {
 
         <main className="content">
           <nav className="tabs">
-            {(["chart", "performance", "trades", "sweep", "scan", "live"] as Tab[])
-              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob))
+            {(["chart", "performance", "trades", "sweep", "scan", "validation", "live"] as Tab[])
+              .filter((t) => (t !== "sweep" || sweepJob || sweep) && (t !== "scan" || scanJob) && (t !== "validation" || validateJob))
               .map((t) => (
               <button
                 key={t}
                 className={`tab ${tab === t ? "active" : ""}`}
                 onClick={() => setTab(t)}
-                disabled={t !== "live" && t !== "sweep" && t !== "scan" && (!result || (t === "chart" && !result.chart))}
+                disabled={!["live", "sweep", "scan", "validation"].includes(t) && (!result || (t === "chart" && !result.chart))}
               >
                 {t === "chart"
                   ? "Chart"
@@ -414,7 +438,9 @@ export default function App() {
                         ? `Sweep${sweep ? ` (${sweep.variants.length})` : ""}`
                         : t === "scan"
                           ? "Scan"
-                          : "Live"}
+                          : t === "validation"
+                            ? "Robustness"
+                            : "Live"}
               </button>
             ))}
             {result && (
@@ -478,7 +504,14 @@ export default function App() {
                 }} />
             )}
 
-            {tab !== "live" && tab !== "sweep" && tab !== "scan" && !result && !error && (
+            {tab === "validation" && validateJob && (
+              <ValidationView job={validateJob} onOpenRun={(id) => openRun(id, { keepDocument: true })}
+                onCancel={async () => {
+                  try { setValidateJob(await api.cancelJob(validateJob.id) as Job<RobustnessResult>); } catch { /* finished */ }
+                }} />
+            )}
+
+            {!["live", "sweep", "scan", "validation"].includes(tab) && !result && !error && (
               <div className="empty">
                 <b>No backtest yet</b>
                 <span>Describe a strategy to the assistant, or build one by hand, then run it.</span>
@@ -488,7 +521,8 @@ export default function App() {
 
             {result && tab === "chart" && <ChartTab result={result} />}
             {result && tab === "performance" && (
-              <PerformanceTab result={result} onFinalTest={runFinalTest} finalTesting={finalTesting} />
+              <PerformanceTab result={result} onFinalTest={runFinalTest} finalTesting={finalTesting}
+                onValidate={runValidate} validating={validating} />
             )}
             {result && tab === "trades" && <TradeLogTab result={result} />}
           </div>

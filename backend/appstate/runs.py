@@ -118,10 +118,15 @@ def list_runs(
     return [_summary(r) for r in rows]
 
 
+# Trials count kind "backtest" runs only: runs and sweep variants are what a
+# trader chooses between. Validation runs (walk-forward folds, slippage
+# stress, a second instrument) check a strategy already chosen.
+
+
 def trial_count(strategy_hash: str) -> int:
     """How many backtests this exact strategy has had."""
     return connection().execute(
-        "SELECT count(*) FROM runs WHERE strategy_hash = ?", [strategy_hash]
+        "SELECT count(*) FROM runs WHERE strategy_hash = ? AND kind = 'backtest'", [strategy_hash]
     ).fetchone()[0]
 
 
@@ -133,7 +138,8 @@ def family_trials(family: str) -> dict[str, int]:
     rather than re-running the same thing.
     """
     row = connection().execute(
-        "SELECT count(*), count(DISTINCT strategy_hash) FROM runs WHERE family = ?", [family]
+        "SELECT count(*), count(DISTINCT strategy_hash) FROM runs WHERE family = ? AND kind = 'backtest'",
+        [family],
     ).fetchone()
     return {"runs": row[0], "variants": row[1]}
 
@@ -147,7 +153,7 @@ def family_experiments(family: str) -> list[float | None]:
     """
     rows = connection().execute(
         """SELECT json_extract(metrics, '$.sharpe') AS sharpe, max(created_at)
-           FROM runs WHERE family = ?
+           FROM runs WHERE family = ? AND kind = 'backtest'
            GROUP BY strategy_hash, json_extract(data, '$.fingerprint')""",
         [family],
     ).fetchall()

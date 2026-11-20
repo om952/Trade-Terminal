@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createChart, ColorType, type IChartApi } from "lightweight-charts";
 import type { BacktestResult, Deflated, Metrics, Trade } from "./api";
+import { ValidatePanel, type ValidateOptions } from "./Validation";
 
 const fmt = (n: number, digits = 2) =>
   Number.isFinite(n) ? n.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "—";
@@ -212,10 +213,12 @@ export function HoldoutNotice({ holdout, onFinalTest, running }: {
   );
 }
 
-export function PerformanceTab({ result, onFinalTest, finalTesting }: {
+export function PerformanceTab({ result, onFinalTest, finalTesting, onValidate, validating }: {
   result: BacktestResult;
   onFinalTest?: () => void;
   finalTesting?: boolean;
+  onValidate?: (o: ValidateOptions) => void;
+  validating?: boolean;
 }) {
   const equityRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
@@ -311,6 +314,7 @@ export function PerformanceTab({ result, onFinalTest, finalTesting }: {
       <MetricGrid m={m} />
 
       {result.deflated && <LuckPanel d={result.deflated} />}
+      {onValidate && !result.holdout?.final && <ValidatePanel onValidate={onValidate} running={Boolean(validating)} />}
 
       <div className="panel" style={{ marginTop: 12 }}>
         <div className="panel-title">Where the money went</div>

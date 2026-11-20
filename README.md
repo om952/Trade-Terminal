@@ -294,6 +294,15 @@ Performance tab (or `POST /api/jobs/final-test`) runs it once on the held-out
 sessions. Each strategy family gets one look; retuning a number keeps it the
 same family. Synthetic data is exempt. `HOLDOUT_MONTHS=0` turns this off.
 
+### Robustness checks
+
+*Run checks* in the Performance tab (or `POST /api/jobs/validate`) runs a
+walk-forward over consecutive folds (for a swept strategy, the best variant is
+chosen on earlier folds and judged on the next), checks whether neighbouring
+parameter values also work, reruns at 1x to 5x slippage, and optionally on a
+second instrument. These runs are recorded but do not count as new tries of
+the idea.
+
 ### Using it from Claude Desktop (MCP)
 
 `trade-terminal mcp` serves the platform's tools over MCP (stdio) for Claude

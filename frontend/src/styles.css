@@ -637,3 +637,5 @@ td.down { color: var(--short); }
   text-align: left; font: inherit; font-size: 12px;
 }
 .link:hover { color: var(--accent); }
+
+.section-title { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }

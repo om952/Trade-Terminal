@@ -18,6 +18,7 @@ from backend.appstate.db import to_json
 from backend.appstate.jobs import JobContext, JobRunner
 from backend.data import cache
 from backend.services import backtest as backtest_service
+from backend.services.validate import ValidateParams
 
 
 class BacktestJob(backtest_service.BacktestParams):
@@ -36,7 +37,7 @@ class FetchJob(BaseModel):
     days: int = Field(default=365, ge=1, le=3650)
 
 
-def resolve_document(job: BacktestJob) -> tuple[dict[str, Any], str | None]:
+def resolve_document(job: BacktestJob | ValidateJob) -> tuple[dict[str, Any], str | None]:
     """The document to run and the saved strategy it belongs to, if any."""
     if job.strategy is not None:
         return job.strategy, job.strategy_id
@@ -51,13 +52,18 @@ def backtest_and_record(
     strategy_id: str | None = None,
     job_id: str | None = None,
     on_progress=None,
+    kind: str = "backtest",
 ) -> dict[str, Any]:
-    """Run a backtest and record it in the run history. Returns the report with run_id."""
+    """Run a backtest and record it in the run history. Returns the report with run_id.
+
+    `kind` "validation" marks a check of a strategy already chosen
+    (backend/services/validate.py): recorded, but not a trial of its family.
+    """
     payload = backtest_service.run(params, on_progress=on_progress)
     document = backtest_service.validate(params.strategy).model_dump(mode="json")
     run_params = params.model_dump(mode="json", exclude={"strategy"})
     run_id = runs.record(
-        kind="backtest", document=document, params=run_params, payload=payload,
+        kind=kind, document=document, params=run_params, payload=payload,
         strategy_id=strategy_id, job_id=job_id,
     )
     from backend.strategy.family import family_key
@@ -236,6 +242,24 @@ def run_final_test_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any
                                          "holdout", "deflated", "family", "family_trials")}
 
 
+def run_validate_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    from backend.services import validate
+
+    job = ValidateJob.model_validate(params)
+    document, strategy_id = resolve_document(job)
+    vparams = validate.ValidateParams.model_validate(
+        {**job.model_dump(exclude={"strategy_id", "version"}), "strategy": document})
+    return validate.run(vparams, strategy_id=strategy_id, job_id=ctx.job_id, on_progress=ctx.progress)
+
+
+class ValidateJob(ValidateParams):
+    """Robustness checks of a document, or of a saved strategy (and version)."""
+
+    strategy: dict[str, Any] | None = None   # type: ignore[assignment]
+    strategy_id: str | None = None
+    version: int | None = None
+
+
 # Jobs that can be run again from where they stopped: the cache's ledger skips
 # what is already downloaded, so a rerun is a resume.
 RESUMABLE = {"fetch", "prefetch"}
@@ -248,3 +272,4 @@ runner.register("scan", run_scan_job)
 runner.register("scan_check", run_scan_check_job)
 runner.register("prefetch", run_prefetch_job)
 runner.register("final_test", run_final_test_job)
+runner.register("validate", run_validate_job)
