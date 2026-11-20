@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/assistant.test.tsx","./src/assistant.tsx","./src/builder.tsx","./src/library.tsx","./src/live.tsx","./src/results.tsx","./src/api.ts","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/assistant.test.tsx","./src/assistant.tsx","./src/builder.tsx","./src/library.tsx","./src/live.tsx","./src/results.tsx","./src/sweep.test.tsx","./src/sweep.tsx","./src/api.ts","./src/main.tsx"],"version":"5.9.3"}

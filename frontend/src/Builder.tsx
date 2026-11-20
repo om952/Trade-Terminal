@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dataset, IndicatorMeta, InstrumentHit, TemplateMeta } from "./api";
 import { api } from "./api";
+import { MAX_SWEEP_RUNS, SweepEditor, sweepCount } from "./Sweep";
 
 type Doc = Record<string, any>;
 
@@ -35,6 +36,8 @@ interface Props {
   validation: { valid: boolean; errors?: { field: string; message: string }[]; summary?: string; hash?: string } | null;
   onRun: () => void;
   running: boolean;
+  /** What is running, shown on the button: "Running…" or "Variant 3 of 12…". */
+  runningLabel?: string;
   runConfig: RunConfig;
   setRunConfig: (c: RunConfig) => void;
   onRefreshDatasets: () => void;
@@ -75,6 +78,8 @@ export function Builder(props: Props) {
     return names;
   }, [doc.indicators, indicators]);
 
+  const sweepRuns = sweepCount(doc);
+
   return (
     <>
       <TemplatePicker templates={templates} onLoad={(d) => setDoc(d)} />
@@ -102,6 +107,7 @@ export function Builder(props: Props) {
       />
       <LegPanel doc={doc} setDoc={setDoc} />
       <RiskPanel doc={doc} update={update} runConfig={props.runConfig} setRunConfig={props.setRunConfig} />
+      <SweepEditor doc={doc} setDoc={setDoc} />
 
       {validation && !validation.valid && (
         <div className="notice error">
@@ -118,11 +124,13 @@ export function Builder(props: Props) {
 
       <button
         className="btn"
-        disabled={!validation?.valid || props.running}
+        disabled={!validation?.valid || props.running || sweepRuns > MAX_SWEEP_RUNS}
         onClick={props.onRun}
         style={{ width: "100%", padding: "10px" }}
       >
-        {props.running ? <><span className="spinner" /> Running…</> : "Run backtest"}
+        {props.running
+          ? <><span className="spinner" /> {props.runningLabel || "Running…"}</>
+          : sweepRuns > 0 ? `Run sweep (${sweepRuns} backtests)` : "Run backtest"}
       </button>
 
       <div className="panel">

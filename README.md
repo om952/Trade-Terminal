@@ -261,7 +261,10 @@ its previous 100 values, 0 to 100), `{"fn": "quantile", "of": "high",
 `sweep` lists numbers to vary (`{"path": "/indicators/0/params/period",
 "values": [5, 9, 13]}`); `POST /api/jobs/sweep` runs every combination (at most
 200) as a recorded backtest, and each one counts as a trial of the strategy's
-family.
+family. In the UI, the Builder's Sweep panel takes a list (`5, 9, 13`) or a
+range (`5..20 step 5`) for any number in the document, and the assistant runs a
+sweep when you ask it to try a range. Results list every variant in grid order;
+none is marked best.
 
 Then the UI (proxies /api to port 8000):
 

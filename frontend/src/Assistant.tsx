@@ -13,8 +13,10 @@ import type {
   Question,
   ReadbackCard,
   RunSummary,
+  SweepResult,
   TranscriptEvent,
 } from "./api";
+import { SweepTable, sweepCount } from "./Sweep";
 
 const POLL_MS = 1000;
 
@@ -299,6 +301,8 @@ function TranscriptItem({ event, document, onOpenRun, onStartPaper }: {
     case "result":
       return <ResultCard run={event.data!.run as RunSummary} document={document}
         onOpenRun={onOpenRun} onStartPaper={onStartPaper} />;
+    case "sweep":
+      return <SweepTable sweep={event.data!.sweep as SweepResult} onOpenRun={onOpenRun} compact />;
     case "explanation":
       return (
         <div className="bubble assistant">
@@ -435,6 +439,7 @@ function Approval({ card, assumptions, document, busy, onReply, onOpenDocument }
   const [change, setChange] = useState("");
   const [json, setJson] = useState(() => JSON.stringify(document, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const runs = sweepCount(document);
 
   const submitEdit = () => {
     try {
@@ -462,7 +467,9 @@ function Approval({ card, assumptions, document, busy, onReply, onOpenDocument }
 
       {mode === "view" && (
         <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-          <button className="btn" disabled={busy} onClick={() => onReply({ action: "approve" })}>Approve and backtest</button>
+          <button className="btn" disabled={busy} onClick={() => onReply({ action: "approve" })}>
+            {runs > 0 ? `Approve and run ${runs} backtests` : "Approve and backtest"}
+          </button>
           <button className="btn secondary" disabled={busy} onClick={() => setMode("change")}>Change something</button>
           <button className="btn secondary tiny" disabled={busy} onClick={() => setMode("edit")}>Edit JSON</button>
           <button className="btn secondary tiny" onClick={() => onOpenDocument(document)}>Open in builder</button>

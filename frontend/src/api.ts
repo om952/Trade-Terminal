@@ -358,6 +358,7 @@ export interface Conversation {
   document: Record<string, unknown> | null;
   assumptions: string[];
   run: RunSummary | null;
+  sweep?: SweepResult | null;
   error: string | null;
   usage: {
     steps?: number; total?: number; seconds?: number;
@@ -416,6 +417,55 @@ export interface LLMStatus {
   configured: boolean;
   limits: { tokens_per_compile: number; model_calls_per_compile: number; seconds_per_compile: number };
 }
+
+export interface SweepAxisSummary {
+  path: string;
+  label: string;
+  values: number[];
+}
+
+export interface SweepRow {
+  label: string;
+  assignment: Record<string, number>;
+  run_id: string;
+  strategy_hash: string;
+  metrics: {
+    total_trades: number | null;
+    net_pnl: number | null;
+    total_return_pct: number | null;
+    sharpe: number | null;
+    max_drawdown_pct: number | null;
+    win_rate_pct: number | null;
+    profit_factor: number | null;
+  };
+}
+
+export interface SweepResult {
+  family: string;
+  family_trials: { runs: number; variants: number } | null;
+  axes: SweepAxisSummary[];
+  symbol: string | null;
+  timeframe: string;
+  synthetic_data: boolean | null;
+  data: { source?: string; first_bar?: string; last_bar?: string; bars?: number } | null;
+  variants: SweepRow[];
+  skipped: { label: string; assignment: Record<string, number>; reason: string }[];
+  note: string;
+}
+
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface Job<R = unknown> {
+  id: string;
+  kind: string;
+  status: JobStatus;
+  progress: number;
+  message: string;
+  result: R | null;
+  error: string | null;
+}
+
+export const TERMINAL_JOB: JobStatus[] = ["succeeded", "failed", "cancelled"];
 
 export interface BuilderBacktestSettings {
   start?: string;
@@ -499,6 +549,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  sweep: (payload: {
+    strategy: unknown;
+    strategy_id?: string;
+    symbol?: string;
+    starting_capital: number;
+    lot_size: number;
+    slippage_bps?: number;
+    max_leverage?: number;
+  }) =>
+    request<Job<SweepResult>>("/api/jobs/sweep", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
+
+  cancelJob: (id: string) =>
+    request<Job>(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
 
   fetchData: (payload: { symbol: string; timeframe: string; days: number }) =>
     request<{ instrument_key: string; fetched: number; total_bars: number; coverage_pct: number; clean: boolean }>(
