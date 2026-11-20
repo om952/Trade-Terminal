@@ -575,6 +575,34 @@ def jobs_backtest(req: job_services.BacktestJob) -> dict:
         return job_runner.submit("backtest", req.model_dump(mode="json"))
 
 
+@app.get("/api/holdout")
+def holdout_status() -> dict:
+    """Where the final holdout starts, and how many ideas have had their one look."""
+    from backend.services import holdout
+
+    return holdout.status()
+
+
+@app.post("/api/jobs/final-test", status_code=202)
+def jobs_final_test(req: job_services.BacktestJob) -> dict:
+    """Run a strategy once on the held-out data. A family that has had its look gets 409."""
+    from backend.services import holdout
+    from backend.strategy.family import family_key
+
+    with _service_errors():
+        document, _ = job_services.resolve_document(req)
+        strategy = backtest_service.validate(document)
+        if holdout.start() is None:
+            raise HTTPException(400, "The holdout is off (HOLDOUT_MONTHS=0).")
+        if not holdout.applies(backtest_service.resolve(req.symbol or strategy.instrument.symbol)):
+            raise HTTPException(400, "Synthetic data has no holdout; the final test is for real market data.")
+        previous = holdout.used(family_key(strategy.model_dump(mode="json")))
+        if previous is not None:
+            raise HTTPException(409, {"message": "This idea has already had its final test.",
+                                      "run_id": previous["run_id"], "at": previous["created_at"]})
+        return job_runner.submit("final_test", req.model_dump(mode="json"))
+
+
 @app.post("/api/jobs/sweep", status_code=202)
 def jobs_sweep(req: job_services.BacktestJob) -> dict:
     """Queue every variant of a strategy's `sweep` as recorded backtests."""

@@ -69,6 +69,41 @@ export default function App() {
   const scanning = scanJob != null && !TERMINAL_JOB.includes(scanJob.status);
   useJobPoll(scanJob, setScanJob, setError);
 
+  // The final test: this idea's one run on the held-out data (backend/services/holdout.py).
+  const [finalJob, setFinalJob] = useState<Job<{ run_id: string }> | null>(null);
+  const finalTesting = finalJob != null && !TERMINAL_JOB.includes(finalJob.status);
+  useJobPoll(finalJob, setFinalJob, setError);
+  useEffect(() => {
+    if (finalJob?.status === "succeeded" && finalJob.result) {
+      api.run(finalJob.result.run_id).then((run) => { setResult(run.result); setTab("performance"); })
+        .catch((e) => setError((e as ApiError).message));
+    }
+    if (finalJob?.status === "failed") setError(`Final test failed: ${finalJob.error}`);
+  }, [finalJob?.status]);
+
+  const runFinalTest = async () => {
+    const ok = window.confirm(
+      "Run the final test on the held-out data?\n\nEach idea gets one. Changing numbers afterwards " +
+      "keeps it the same idea, so it cannot be tested on the held-out data again.",
+    );
+    if (!ok) return;
+    setError(null);
+    try {
+      setFinalJob(await api.finalTest({
+        strategy: doc,
+        symbol: runConfig.symbol || undefined,
+        starting_capital: runConfig.starting_capital,
+        lot_size: runConfig.lot_size,
+        slippage_bps: runConfig.slippage_bps,
+        max_leverage: runConfig.max_leverage,
+      }));
+    } catch (e) {
+      const err = e as ApiError;
+      const detail = err.detail as { message?: string; run_id?: string } | undefined;
+      setError(detail?.message ? `${detail.message} (run ${detail.run_id ?? "still running"})` : err.message);
+    }
+  };
+
   const runScan = async (mode: "now" | "history", override?: Record<string, any>) => {
     setError(null);
     try {
@@ -452,7 +487,9 @@ export default function App() {
             )}
 
             {result && tab === "chart" && <ChartTab result={result} />}
-            {result && tab === "performance" && <PerformanceTab result={result} />}
+            {result && tab === "performance" && (
+              <PerformanceTab result={result} onFinalTest={runFinalTest} finalTesting={finalTesting} />
+            )}
             {result && tab === "trades" && <TradeLogTab result={result} />}
           </div>
         </main>

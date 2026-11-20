@@ -180,7 +180,43 @@ export function LuckPanel({ d }: { d: Deflated }) {
   );
 }
 
-export function PerformanceTab({ result }: { result: BacktestResult }) {
+/** Where the holdout cut this run, or that this run was the idea's one look at it. */
+export function HoldoutNotice({ holdout, onFinalTest, running }: {
+  holdout: NonNullable<BacktestResult["holdout"]>;
+  onFinalTest?: () => void;
+  running?: boolean;
+}) {
+  if (holdout.final) {
+    return (
+      <div className="notice warn" role="status">
+        <div className="notice-title">Final test on held-out data</div>
+        This ran on the sessions from {holdout.start}, which no ordinary backtest can see. It was this
+        idea's one look: compare it with the earlier results, and do not retune and test again.
+      </div>
+    );
+  }
+  if (!holdout.note) return null;
+  return (
+    <div className="notice" role="status">
+      <div className="notice-title">Held out from {holdout.start}</div>
+      {holdout.note} When you are done tuning, the final test runs this idea once on the held-out data;
+      changing numbers keeps it the same idea.
+      {onFinalTest && (
+        <div style={{ marginTop: 6 }}>
+          <button className="btn secondary tiny" disabled={running} onClick={onFinalTest}>
+            {running ? <><span className="spinner" /> Running the final test…</> : "Run the final test"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PerformanceTab({ result, onFinalTest, finalTesting }: {
+  result: BacktestResult;
+  onFinalTest?: () => void;
+  finalTesting?: boolean;
+}) {
   const equityRef = useRef<HTMLDivElement>(null);
   const ddRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
@@ -262,6 +298,8 @@ export function PerformanceTab({ result }: { result: BacktestResult }) {
           it is not evidence that the strategy makes money.
         </div>
       )}
+
+      {result.holdout && <HoldoutNotice holdout={result.holdout} onFinalTest={onFinalTest} running={finalTesting} />}
 
       {result.warnings.map((w, i) => (
         <div className="notice warn" key={i}>

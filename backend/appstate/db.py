@@ -169,6 +169,22 @@ MIGRATIONS: list[Migration] = [
     );
     CREATE INDEX ix_scan_events ON scan_events(scan_id, id);
     """,
+    # 5: the final holdout (P4.2). app_meta holds values fixed once, such as the
+    # holdout's start; holdout_tests is the one look each strategy family gets.
+    """
+    CREATE TABLE app_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE holdout_tests (
+        family        TEXT PRIMARY KEY,
+        holdout_start TEXT NOT NULL,
+        run_id        TEXT REFERENCES runs(id),
+        strategy_hash TEXT,
+        created_at    TEXT NOT NULL
+    );
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

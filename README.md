@@ -285,6 +285,15 @@ shows what is missing and how long Upstox's rate limits make it take, and
 `POST /api/jobs/{id}/resume`; stored sessions are skipped). The Screener's
 universe panel has the same as Check history and Download.
 
+### The final holdout
+
+The most recent `HOLDOUT_MONTHS` (default 6) of real market data, fixed the
+first time it is needed, are kept out of every ordinary backtest: runs stop
+the day before and say so. When an idea is tuned, *Run the final test* in the
+Performance tab (or `POST /api/jobs/final-test`) runs it once on the held-out
+sessions. Each strategy family gets one look; retuning a number keeps it the
+same family. Synthetic data is exempt. `HOLDOUT_MONTHS=0` turns this off.
+
 ### Using it from Claude Desktop (MCP)
 
 `trade-terminal mcp` serves the platform's tools over MCP (stdio) for Claude

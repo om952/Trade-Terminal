@@ -137,6 +137,7 @@ export interface BacktestResult {
   family?: string;
   family_trials?: { runs: number; variants: number };
   deflated?: Deflated;
+  holdout?: { start: string; final: boolean; note: string | null } | null;
   warnings: string[];
   metrics: Metrics;
   split: {
@@ -743,6 +744,10 @@ export const api = {
 
   compileScan: (payload: { text: string; dialogue?: { role: string; content: string }[]; current?: unknown }) =>
     request<Job<ScanCompileResult>>("/api/scans/compile", { method: "POST", body: JSON.stringify(payload) }),
+
+  finalTest: (payload: { strategy: unknown; symbol?: string; starting_capital: number; lot_size: number;
+    slippage_bps?: number; max_leverage?: number }) =>
+    request<Job<{ run_id: string }>>("/api/jobs/final-test", { method: "POST", body: JSON.stringify(payload) }),
 
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 

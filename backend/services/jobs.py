@@ -223,6 +223,19 @@ def run_prefetch_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
     return prefetch.run(prefetch.PrefetchParams.model_validate(params), on_progress=ctx.progress)
 
 
+def run_final_test_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    from backend.services import holdout
+
+    job = BacktestJob.model_validate(params)
+    document, strategy_id = resolve_document(job)
+    run_params = backtest_service.BacktestParams.model_validate(
+        {**job.model_dump(exclude={"strategy_id", "version"}), "strategy": document}
+    )
+    payload = holdout.final_test(run_params, strategy_id=strategy_id, on_progress=ctx.progress)
+    return {k: payload.get(k) for k in ("run_id", "strategy_hash", "metrics", "data", "warnings",
+                                         "holdout", "deflated", "family", "family_trials")}
+
+
 # Jobs that can be run again from where they stopped: the cache's ledger skips
 # what is already downloaded, so a rerun is a resume.
 RESUMABLE = {"fetch", "prefetch"}
@@ -234,3 +247,4 @@ runner.register("sweep", run_sweep_job)
 runner.register("scan", run_scan_job)
 runner.register("scan_check", run_scan_check_job)
 runner.register("prefetch", run_prefetch_job)
+runner.register("final_test", run_final_test_job)
