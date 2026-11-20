@@ -557,6 +557,15 @@ def runs_get(run_id: str, include_result: bool = True) -> dict:
         return run_history.get(run_id, include_result)
 
 
+@app.get("/api/runs/{run_id}/report")
+def runs_report(run_id: str) -> dict:
+    """Write the run's self-contained HTML report; returns its path and headline numbers."""
+    from backend.services import report
+
+    with _service_errors():
+        return report.write(run_id)
+
+
 @app.post("/api/jobs/backtest", status_code=202)
 def jobs_backtest(req: job_services.BacktestJob) -> dict:
     """Queue a backtest. Poll GET /api/jobs/{id}; the result names the recorded run."""

@@ -155,6 +155,14 @@ def cmd_where(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Serve the MCP tools on stdio for Claude Desktop and other clients. Needs the app running."""
+    from backend.mcpserver.server import main as serve_mcp
+
+    serve_mcp()
+    return 0
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     from backend.core.version import __version__
 
@@ -187,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="with import: delete the imported lines from .env afterwards")
     creds.set_defaults(func=cmd_credentials)
     sub.add_parser("where", help="show where data and settings live").set_defaults(func=cmd_where)
+    sub.add_parser("mcp", help="serve MCP tools on stdio (for Claude Desktop); the app must be running").set_defaults(func=cmd_mcp)
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)
 
     args = parser.parse_args(argv)

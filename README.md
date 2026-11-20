@@ -285,6 +285,29 @@ shows what is missing and how long Upstox's rate limits make it take, and
 `POST /api/jobs/{id}/resume`; stored sessions are skipped). The Screener's
 universe panel has the same as Check history and Download.
 
+### Using it from Claude Desktop (MCP)
+
+`trade-terminal mcp` serves the platform's tools over MCP (stdio) for Claude
+Desktop or any MCP client. It talks to the running app, so start that first
+(`trade-terminal serve`). The tools validate strategies and scans (with the
+same read-back the app shows), run backtests and scans as jobs, report job
+status, cancel jobs, write a run's HTML report to disk, and list saved
+strategies. None of them can place an order or start trading.
+
+Add this to Claude Desktop's `claude_desktop_config.json` (use the full path to
+`trade-terminal` if it is not on the PATH Claude Desktop sees):
+
+```json
+{
+  "mcpServers": {
+    "trade-terminal": {"command": "trade-terminal", "args": ["mcp"]}
+  }
+}
+```
+
+Set `TRADE_TERMINAL_URL` in the server's `env` if the app is not on
+`http://127.0.0.1:8000`.
+
 Then the UI (proxies /api to port 8000):
 
 ```bash
