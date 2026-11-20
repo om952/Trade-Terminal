@@ -60,6 +60,18 @@ def backtest_and_record(
     (backend/services/validate.py): recorded, but not a trial of its family.
     """
     payload = backtest_service.run(params, on_progress=on_progress)
+    return record_backtest(params, payload, strategy_id=strategy_id, job_id=job_id, kind=kind)
+
+
+def record_backtest(
+    params: backtest_service.BacktestParams,
+    payload: dict[str, Any],
+    *,
+    strategy_id: str | None = None,
+    job_id: str | None = None,
+    kind: str = "backtest",
+) -> dict[str, Any]:
+    """Record a finished backtest's report as a run and add its trial counts and deflated Sharpe."""
     document = backtest_service.validate(params.strategy).model_dump(mode="json")
     run_params = params.model_dump(mode="json", exclude={"strategy"})
     run_id = runs.record(
@@ -74,6 +86,42 @@ def backtest_and_record(
     payload["family_trials"] = runs.family_trials(payload["family"])
     payload["deflated"] = deflated_sharpe(payload["metrics"], payload["family"])
     return json.loads(to_json(payload))
+
+
+def backtests_and_record(
+    requests: list[backtest_service.BacktestParams],
+    *,
+    labels: list[str] | None = None,
+    strategy_id: str | None = None,
+    job_id: str | None = None,
+    on_progress=None,
+    kind: str = "backtest",
+    noun: str = "Backtest",
+) -> list[dict[str, Any] | Exception]:
+    """Many backtests in worker processes (backend/services/pool.py), recorded here in request order.
+
+    Recording after the batch, in order, gives every run the trial count and
+    deflated Sharpe it would have had if the batch had run one at a time. On a
+    cancel, the backtests that finished are still recorded (they were looks at
+    the data), then the cancel propagates.
+    """
+    from backend.services import pool
+
+    def record(outcomes: list) -> list:
+        recorded: list = []
+        for params, outcome in zip(requests, outcomes, strict=True):
+            if outcome is None or isinstance(outcome, Exception):
+                recorded.append(outcome)
+            else:
+                recorded.append(record_backtest(params, outcome, strategy_id=strategy_id, job_id=job_id, kind=kind))
+        return recorded
+
+    try:
+        outcomes = pool.backtest_many(requests, on_progress=on_progress, labels=labels, noun=noun)
+    except BaseException as exc:
+        record(getattr(exc, "partial", [None] * len(requests)))
+        raise
+    return record(outcomes)
 
 
 def deflated_sharpe(metrics: dict[str, Any], family: str) -> dict[str, Any]:
@@ -147,18 +195,26 @@ def sweep_and_record(
     rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     first: dict[str, Any] | None = None
-    for n, variant in enumerate(grid):
-        if on_progress is not None:
-            on_progress(n / len(grid), f"Variant {n + 1} of {len(grid)}: {variant.label}")
+    runnable = [v for v in grid if v.strategy is not None]
+    requests = [backtest_service.BacktestParams.model_validate({
+        **base, "include_chart": False, "strategy": v.strategy.model_dump(mode="json"),   # type: ignore[union-attr]
+    }) for v in runnable]
+    outcomes = iter(backtests_and_record(
+        requests, labels=[v.label for v in runnable], strategy_id=strategy_id, job_id=job_id,
+        on_progress=on_progress, noun="Variant",
+    ) if requests else [])
+    failures: list[Exception] = []
+    for variant in grid:
         if variant.strategy is None:
             skipped.append({"label": variant.label, "assignment": variant.assignment,
                             "reason": variant.error})
             continue
-        run_params = backtest_service.BacktestParams.model_validate({
-            **base, "include_chart": False,
-            "strategy": variant.strategy.model_dump(mode="json"),
-        })
-        payload = backtest_and_record(run_params, strategy_id=strategy_id, job_id=job_id)
+        payload = next(outcomes)
+        if isinstance(payload, Exception):
+            failures.append(payload)
+            skipped.append({"label": variant.label, "assignment": variant.assignment,
+                            "reason": f"could not run: {payload}"})
+            continue
         first = first or payload
         rows.append({
             "label": variant.label,
@@ -167,6 +223,8 @@ def sweep_and_record(
             "strategy_hash": payload["strategy_hash"],
             "metrics": {k: payload["metrics"].get(k) for k in SWEEP_METRICS},
         })
+    if failures and not rows:
+        raise failures[0]        # nothing ran (no data, say): fail with the reason, as one backtest would
 
     family = family_key(strategy)
     if on_progress is not None:

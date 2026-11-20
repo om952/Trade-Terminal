@@ -14,6 +14,8 @@ backtest goes through (the UI, the chat builder, sweeps, MCP):
   and the data behind it stays unseen.
 * An ordinary backtest of real market data ends the day before the holdout,
   and says so. Synthetic (SIM|) data is exempt: it says nothing about markets.
+  Portfolio backtests and scan history (a measurement of a signal) stop there
+  too; a scan's "now" mode does not, since it reports today's state.
 * `final_test` runs a strategy on the holdout once per family. The claim is
   taken before the run, so two at once cannot both get in; a run that fails
   to produce a result (no data, an error) releases it.

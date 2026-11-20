@@ -305,19 +305,22 @@ def test_sweep_job_errors(api):
 
 
 def test_sweep_job_can_be_cancelled(api, monkeypatch):
-    from backend.services import jobs as job_module
+    from backend.core.config import settings
+    from backend.services import pool
     from backend.services.jobs import runner
 
     started = threading.Event()
     release = threading.Event()
-    real = job_module.backtest_and_record
+    real = pool._seeded_compute
 
     def slow(*args, **kwargs):
         started.set()
         release.wait(10)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(job_module, "backtest_and_record", slow)
+    # One worker: the variants run in this process, where the hook can hold them.
+    monkeypatch.setattr(settings, "backtest_workers", 1)
+    monkeypatch.setattr(pool, "_seeded_compute", slow)
     job_id = api.post("/api/jobs/sweep", json={"strategy": _swept_doc()}).json()["id"]
     assert started.wait(10)
     api.post(f"/api/jobs/{job_id}/cancel")

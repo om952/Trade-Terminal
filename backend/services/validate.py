@@ -84,6 +84,34 @@ class _Runner:
         self.done += 1
         return payload
 
+    def run_many(self, items: list[tuple[dict[str, Any], str, dict[str, Any]]]) -> list[dict[str, Any]]:
+        """Independent runs (document, label, overrides) in worker processes, in order.
+
+        As with `run`, any failure fails the check: a robustness verdict over
+        some of its runs would be a different check.
+        """
+        from backend.services.jobs import backtests_and_record
+
+        if not items:
+            return []
+        base = self.params.model_dump(exclude={"strategy", "folds", "slippage_multipliers", "second_symbol"})
+        requests = [backtest_service.BacktestParams.model_validate(
+            {**base, **overrides, "strategy": document, "include_chart": False})
+            for document, _, overrides in items]
+        start = self.done
+
+        def progress(fraction: float, message: str) -> None:
+            if self.on_progress is not None:
+                self.on_progress(min(0.99, (start + fraction * len(items)) / self.total), message)
+
+        outcomes = backtests_and_record(requests, labels=[label for _, label, _ in items], strategy_id=self.strategy_id,
+                                        job_id=self.job_id, on_progress=progress, kind=KIND, noun="Run")
+        self.done += len(items)
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                raise outcome
+        return outcomes   # type: ignore[return-value]
+
 
 def _folds(first: date, last: date, n: int) -> list[tuple[date, date]]:
     """n consecutive date ranges covering [first, last]."""
@@ -101,8 +129,9 @@ def walk_forward(runner: _Runner, document: dict[str, Any], variants: list[Candi
                  folds: list[tuple[date, date]]) -> dict[str, Any]:
     if not variants:
         rows = []
-        for i, (a, b) in enumerate(folds):
-            p = runner.run(document, f"walk-forward fold {i + 1}", start=a, end=b)
+        runs = runner.run_many([(document, f"walk-forward fold {i + 1}", {"start": a, "end": b})
+                                for i, (a, b) in enumerate(folds)])
+        for i, ((a, b), p) in enumerate(zip(folds, runs, strict=True)):
             rows.append({"fold": i + 1, "start": a.isoformat(), "end": b.isoformat(), "run_id": p["run_id"],
                          "metrics": _metrics(p)})
         pnl = [r["metrics"]["net_pnl"] or 0 for r in rows]
@@ -110,18 +139,21 @@ def walk_forward(runner: _Runner, document: dict[str, Any], variants: list[Candi
                 "worst_fold_pnl": min(pnl), "best_fold_pnl": max(pnl)}
 
     # Anchored walk-forward optimisation: choose on folds[0..i-1], test on fold i.
-    rows = []
+    # Every fold's in-sample runs are independent of each other: one batch.
+    # The out-of-sample runs depend on the choices: a second batch.
+    plan = [(i, v) for i in range(1, len(folds)) for v in variants]
+    in_sample = runner.run_many([(v.document, f"fold {i + 1} in-sample: {v.label}",
+                                  {"start": folds[0][0], "end": folds[i - 1][1]}) for i, v in plan])
+    chosen = []
     for i in range(1, len(folds)):
-        is_start, is_end = folds[0][0], folds[i - 1][1]
-        scored = []
-        for v in variants:
-            p = runner.run(v.document, f"fold {i + 1} in-sample: {v.label}",
-                           start=is_start, end=is_end)
-            scored.append((_sharpe(p), v, p))
-        best_sharpe, best, _ = max(scored, key=lambda t: t[0])
+        scored = [(_sharpe(p), v) for (j, v), p in zip(plan, in_sample, strict=True) if j == i]
+        best_sharpe, best = max(scored, key=lambda t: t[0])      # first wins a tie, as before
+        chosen.append((i, best_sharpe, best))
+    out_of_sample = runner.run_many([(best.document, f"fold {i + 1} out-of-sample: {best.label}",
+                                      {"start": folds[i][0], "end": folds[i][1]}) for i, _, best in chosen])
+    rows = []
+    for (i, best_sharpe, best), oos in zip(chosen, out_of_sample, strict=True):
         a, b = folds[i]
-        oos = runner.run(best.document, f"fold {i + 1} out-of-sample: {best.label}",
-                         start=a, end=b)
         rows.append({"fold": i + 1, "start": a.isoformat(), "end": b.isoformat(), "chosen": best.label,
                      "in_sample_sharpe": None if math.isinf(best_sharpe) else best_sharpe,
                      "run_id": oos["run_id"], "metrics": _metrics(oos)})
@@ -161,11 +193,10 @@ def neighbourhood(grid: list[dict[str, Any]], axes: list[dict[str, Any]]) -> dic
 
 
 def slippage_stress(runner: _Runner, document: dict[str, Any], base_bps: float, multipliers: list[float]) -> dict[str, Any]:
-    rows = []
-    for m in sorted(set(multipliers)):
-        bps = round(base_bps * m, 4)
-        p = runner.run(document, f"slippage {bps:g} bps", slippage_bps=bps)
-        rows.append({"multiplier": m, "slippage_bps": bps, "run_id": p["run_id"], "metrics": _metrics(p)})
+    levels = [(m, round(base_bps * m, 4)) for m in sorted(set(multipliers))]
+    runs = runner.run_many([(document, f"slippage {bps:g} bps", {"slippage_bps": bps}) for _, bps in levels])
+    rows = [{"multiplier": m, "slippage_bps": bps, "run_id": p["run_id"], "metrics": _metrics(p)}
+            for (m, bps), p in zip(levels, runs, strict=True)]
     # Where net P&L crosses zero, by linear interpolation between levels.
     breakeven = None
     for lo, hi in zip(rows, rows[1:]):
@@ -240,10 +271,9 @@ def run(params: ValidateParams, *, strategy_id: str | None = None, job_id: str |
 
     out["neighbourhood"] = None
     if variants:
-        grid = []
-        for v in variants:
-            p = runner.run(v.document, f"grid: {v.label}")
-            grid.append({"label": v.label, "assignment": v.assignment, "run_id": p["run_id"], "metrics": _metrics(p)})
+        runs = runner.run_many([(v.document, f"grid: {v.label}", {}) for v in variants])
+        grid = [{"label": v.label, "assignment": v.assignment, "run_id": p["run_id"], "metrics": _metrics(p)}
+                for v, p in zip(variants, runs, strict=True)]
         axes = [{"path": a.path, "values": a.values} for a in strategy.sweep]
         out["neighbourhood"] = neighbourhood(grid, axes)
 

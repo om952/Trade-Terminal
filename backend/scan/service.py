@@ -3,6 +3,11 @@
 Every instrument appears in the result, including the ones that could not be
 scanned (no data, not enough history, an error) with the reason. Dropping them
 silently would make a scan of 200 stocks that really covered 140 look complete.
+
+History mode measures how a signal did, which is a test of an idea, so on real
+market data it stops before the final holdout like every backtest
+(backend/services/holdout.py). "Now" mode reads up to the latest bar: it says
+where stocks stand today, which is what the trader acts on, not a measurement.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from pydantic import BaseModel
 from backend.appstate.db import to_json
 from backend.scan import engine
 from backend.scan.spec import HORIZONS, ScanSpec, Universe
+from backend.services import holdout
 
 Progress = Callable[[float, str], None]
 
@@ -107,6 +113,7 @@ def run(params: ScanParams, on_progress: Progress | None = None) -> dict[str, An
         history["events"][str(h)] = []
         history["baseline"][str(h)] = []
     events: list[dict[str, Any]] = []
+    holdouts: list[dict[str, Any]] = []
 
     for n, item in enumerate(universe):
         if on_progress is not None:
@@ -116,7 +123,12 @@ def run(params: ScanParams, on_progress: Progress | None = None) -> dict[str, An
             rows.append({**row, "status": ERROR, "reason": f"Unknown instrument {item['symbol']!r}"})
             continue
         try:
-            bars = _bars(item["key"], params.start, params.end, params.fetch)
+            start, end = params.start, params.end
+            if params.mode == "history":
+                start, end, held = holdout.bounds(item["key"], start, end)
+                if held is not None:
+                    holdouts.append(held)
+            bars = _bars(item["key"], start, end, params.fetch)
         except Exception as exc:  # noqa: BLE001 - one bad instrument must not end the scan
             rows.append({**row, "status": ERROR, "reason": str(exc)})
             continue
@@ -153,7 +165,12 @@ def run(params: ScanParams, on_progress: Progress | None = None) -> dict[str, An
 
     if on_progress is not None:
         on_progress(1.0, f"Scanned {len(universe)} instruments")
-    return json.loads(to_json(_result(spec, params, rows, history, events)))
+    out = _result(spec, params, rows, history, events)
+    if holdouts:
+        out["holdout"] = holdouts[0]
+        if holdouts[0].get("note"):
+            out["notes"].insert(1, holdouts[0]["note"].replace("this backtest ends", "this history ends"))
+    return json.loads(to_json(out))
 
 
 def _result(spec, params, rows, history, events) -> dict[str, Any]:

@@ -9,6 +9,7 @@ drift, and the agent's numbers would stop matching the UI's.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -97,12 +98,26 @@ def load_bars(
     return bars
 
 
-def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str, Any]:
-    """Validate, load data, run the engine and shape the report.
+@dataclass
+class Prepared:
+    """A backtest with its data loaded: everything `compute` needs, and nothing it must open.
 
-    `on_progress(fraction, message)` may raise to cancel; the exception
-    propagates unchanged.
+    Building one reads the market data store and the holdout date, so it
+    happens in the app's process; `compute` is then pure and can run in a
+    worker process (backend/services/pool.py).
     """
+
+    params: BacktestParams
+    symbol: str
+    frame: pd.DataFrame
+    synthetic: bool
+    data: dict[str, Any]
+    holdout: dict[str, Any] | None
+
+
+def prepare(req: BacktestParams, *, on_progress: Progress | None = None,
+            frames: dict[tuple, cache.Bars] | None = None) -> Prepared:
+    """Validate and load the bars. `frames` reuses bars already loaded for the same range."""
     strategy = validate(req.strategy)
     symbol = req.symbol or strategy.instrument.symbol
     # Real market data stops before the final holdout (backend/services/holdout.py),
@@ -110,11 +125,30 @@ def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str
     from backend.services import holdout
 
     first, last, held = holdout.bounds(resolve(symbol), req.start, req.end)
-    bars = load_bars(
-        symbol, strategy.timeframe, first, last,
-        on_progress=_scaled(on_progress, 0.0, DATA_SHARE),
-    )
-    df = bars.frame
+    key = (resolve(symbol), strategy.timeframe, first, last)
+    bars = frames.get(key) if frames is not None else None
+    if bars is None:
+        bars = load_bars(symbol, strategy.timeframe, first, last, on_progress=on_progress)
+        if frames is not None:
+            frames[key] = bars
+    return Prepared(params=req, symbol=symbol, frame=bars.frame, synthetic=bars.synthetic,
+                    data=bars.describe(), holdout=held)
+
+
+def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str, Any]:
+    """Validate, load data, run the engine and shape the report.
+
+    `on_progress(fraction, message)` may raise to cancel; the exception
+    propagates unchanged.
+    """
+    prepared = prepare(req, on_progress=_scaled(on_progress, 0.0, DATA_SHARE))
+    return compute(prepared, on_progress=on_progress)
+
+
+def compute(prepared: Prepared, *, on_progress: Progress | None = None) -> dict[str, Any]:
+    """Run the engine on loaded bars and shape the report. Opens no store."""
+    req, symbol, df = prepared.params, prepared.symbol, prepared.frame
+    strategy = validate(req.strategy)
 
     warnings = preflight(strategy, df)
     capital = Decimal(str(req.starting_capital))
@@ -164,8 +198,8 @@ def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str
         "symbol": symbol,
         "timeframe": strategy.timeframe,
         "segment": segment.value,
-        "synthetic_data": bars.synthetic,
-        "data": bars.describe(),
+        "synthetic_data": prepared.synthetic,
+        "data": prepared.data,
         "warnings": warnings,
         "metrics": stats.as_dict(),
         "split": split,
@@ -173,7 +207,7 @@ def run(req: BacktestParams, *, on_progress: Progress | None = None) -> dict[str
         "equity_curve": equity_payload(result.equity_curve),
         "costs": cost_context(segment, req.lot_size, df),
         "blocked_reasons": blocked_summary(result),
-        "holdout": held,
+        "holdout": prepared.holdout,
     }
 
     if req.include_chart:

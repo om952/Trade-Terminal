@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # The research graph (P4.3): hard caps on one research run.
     research_max_variants: int = Field(default=8, ge=1, le=20)
     research_max_backtests: int = Field(default=120, ge=10, le=1000)
+    # Worker processes for batches of backtests (sweeps, robustness checks,
+    # research). 0 picks one fewer than the CPU count, at most 4; 1 runs every
+    # backtest in the app's own process.
+    backtest_workers: int = Field(default=0, ge=0, le=32)
 
     # --- Runtime ---
     mode: Mode = Mode.BACKTEST
