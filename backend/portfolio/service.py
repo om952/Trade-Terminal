@@ -98,6 +98,14 @@ def run(params: PortfolioParams, *, on_progress=None, job_id: str | None = None,
     engine.run((ReplayUniverseFeed if feed == "replay" else HistoricalUniverseFeed)(frames))
 
     metrics = compute_metrics(engine.equity_curve, engine.trades, Decimal(str(params.starting_capital)), "1d")
+    # A portfolio usually ends holding something. Trade statistics cover the closed
+    # trades; net P&L is the change in equity, so it agrees with the return, and is
+    # split into what was realized and what is still open (marked at the last close).
+    realized = sum((float(t.net_pnl) for t in engine.trades), 0.0)
+    measured = metrics.as_dict()
+    measured["realized_pnl"] = round(realized, 2)
+    measured["net_pnl"] = round(metrics.ending_equity - params.starting_capital, 2)
+    measured["unrealized_pnl"] = round(measured["net_pnl"] - realized, 2)
     first = min(f["timestamp"].iloc[0] for f in frames.values())
     last = max(f["timestamp"].iloc[-1] for f in frames.values())
     synthetic = all(k.startswith("SIM|") for k in frames)
@@ -112,7 +120,7 @@ def run(params: PortfolioParams, *, on_progress=None, job_id: str | None = None,
         "data": {"instruments": len(tradable), "benchmark": benchmark, "first_bar": pd.Timestamp(first).isoformat(),
                  "last_bar": pd.Timestamp(last).isoformat(), "missing": missing,
                  "fingerprint": _fingerprint(frames)},
-        "metrics": metrics.as_dict(),
+        "metrics": measured,
         "trades": [t.as_dict() for t in engine.trades],
         "equity_curve": equity_payload(engine.equity_curve),
         "rebalances": engine.rebalances,

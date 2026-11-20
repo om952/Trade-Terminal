@@ -813,6 +813,13 @@ export const api = {
   researchReply: (id: string, payload: Record<string, unknown>) =>
     request<ResearchSession>(`/api/research/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify(payload) }),
 
+  validatePortfolio: (spec: unknown) =>
+    request<{ valid: boolean; universe?: number; family?: string; errors?: { field: string; message: string }[] }>(
+      "/api/portfolio/validate", { method: "POST", body: JSON.stringify(spec) }),
+
+  portfolio: (payload: { spec: unknown; starting_capital: number; slippage_bps: number }) =>
+    request<Job<{ run_id: string }>>("/api/jobs/portfolio", { method: "POST", body: JSON.stringify(payload) }),
+
   job: <R = unknown>(id: string) => request<Job<R>>(`/api/jobs/${encodeURIComponent(id)}`),
 
   cancelJob: (id: string) =>
