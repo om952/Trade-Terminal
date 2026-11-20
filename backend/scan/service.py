@@ -65,9 +65,9 @@ def validate(document: dict[str, Any]) -> ScanSpec:
 def resolve_universe(universe: Universe) -> list[dict[str, str]]:
     """[{key, symbol}] for every instrument in the universe, in a stable order."""
     if universe.preset == "fno_stocks":
-        from backend.data.store import get_db
+        from backend.data.store import read
 
-        rows = get_db().execute(
+        rows = read(
             """SELECT DISTINCT f.underlying_key, COALESCE(e.trading_symbol, f.underlying_symbol)
                FROM instruments f
                LEFT JOIN instruments e ON e.instrument_key = f.underlying_key

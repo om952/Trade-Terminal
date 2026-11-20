@@ -153,6 +153,57 @@ def _check_store_version(db: duckdb.DuckDBPyConnection) -> None:
         )
 
 
+class Rows:
+    """The result of `read`: fetched once, and the cursor is closed by then."""
+
+    def __init__(self, cursor: duckdb.DuckDBPyConnection) -> None:
+        self._cursor = cursor
+
+    def _take(self, fetch):
+        try:
+            return fetch()
+        finally:
+            self._cursor.close()
+
+    def fetchone(self):
+        return self._take(self._cursor.fetchone)
+
+    def fetchall(self) -> list:
+        return self._take(self._cursor.fetchall)
+
+    def df(self) -> pd.DataFrame:
+        return self._take(self._cursor.df)
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+def read(sql: str, params: list | None = None) -> Rows:
+    """Run a read on its own cursor, which is closed as soon as the rows are fetched.
+
+    The shared connection refuses a second caller while it is busy, and a
+    cursor left for the garbage collector closes at an arbitrary moment, on
+    whichever thread happens to be running, which can stall a process. Every
+    read outside this module goes through here.
+    """
+    cursor = get_db().cursor()
+    try:
+        cursor.execute(sql, params or [])
+    except BaseException:
+        cursor.close()
+        raise
+    return Rows(cursor)
+
+
+def write(sql: str, params: list | None = None) -> None:
+    """Run one write statement on its own cursor, closed before returning."""
+    cursor = get_db().cursor()
+    try:
+        cursor.execute(sql, params or [])
+    finally:
+        cursor.close()
+
+
 def close_db() -> None:
     global _db
     with _lock:
@@ -273,9 +324,8 @@ def write_candles(
 def _update_coverage(
     instrument_key: str, timeframe: str, df: pd.DataFrame, source: str
 ) -> None:
-    # A cursor per call: the shared connection object is not safe to use from
-    # several threads at once, and writes for different files run in parallel.
-    get_db().cursor().execute(
+    # Its own cursor (see `write`): writes for different files run in parallel.
+    write(
         """INSERT OR REPLACE INTO coverage
            (instrument_key, timeframe, first_bar, last_bar, bar_count, updated_at, source)
            VALUES (?,?,?,?,?,?,?)""",
@@ -326,7 +376,7 @@ def _as_ts(value: date | datetime, end_of_day: bool = False) -> pd.Timestamp:
 def read_coverage(instrument_key: str, timeframe: str) -> dict:
     # Fetched through pandas: DuckDB's row API needs the optional `pytz` package
     # to return a TIMESTAMPTZ, and raises without it. The frame path does not.
-    frame = get_db().cursor().execute(
+    frame = read(
         """SELECT first_bar, last_bar, bar_count, updated_at, source
            FROM coverage WHERE instrument_key = ? AND timeframe = ?""",
         [instrument_key, timeframe],
@@ -350,16 +400,14 @@ def read_coverage(instrument_key: str, timeframe: str) -> dict:
 
 
 def all_coverage() -> pd.DataFrame:
-    return get_db().execute(
-        "SELECT * FROM coverage ORDER BY instrument_key, timeframe"
-    ).df()
+    return read("SELECT * FROM coverage ORDER BY instrument_key, timeframe").df()
 
 
 def delete_candles(instrument_key: str, timeframe: str) -> None:
     path = candle_path(instrument_key, timeframe)
     with _file_lock(instrument_key, timeframe):
         path.unlink(missing_ok=True)
-        get_db().cursor().execute(
+        write(
             "DELETE FROM coverage WHERE instrument_key = ? AND timeframe = ?",
             [instrument_key, timeframe],
         )
@@ -371,4 +419,4 @@ def stored_instruments(timeframe: str | None = None) -> list[tuple[str, str]]:
     if timeframe:
         q += " WHERE timeframe = ?"
         params.append(timeframe)
-    return [tuple(r) for r in get_db().execute(q + " ORDER BY 1,2", params).fetchall()]
+    return [tuple(r) for r in read(q + " ORDER BY 1,2", params).fetchall()]

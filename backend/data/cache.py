@@ -49,6 +49,7 @@ import pandas as pd
 
 from backend.core.config import IST
 from backend.data import calendar as cal
+from backend.data import store
 from backend.data.store import (
     CANDLE_COLUMNS,
     get_db,
@@ -208,13 +209,8 @@ def bars_per_session(tf: Timeframe, instrument_key: str = "") -> int:
 # Ledger
 # ---------------------------------------------------------------------------
 
-def _db():
-    # A cursor per call: the shared connection is not safe across threads.
-    return get_db().cursor()
-
-
 def _ledger(instrument_key: str, tf: Timeframe, start: date, end: date) -> dict[date, tuple[int, date]]:
-    rows = _db().execute(
+    rows = store.read(
         """SELECT day, bars, checked_on FROM session_ledger
            WHERE instrument_key = ? AND timeframe = ? AND day BETWEEN ? AND ?""",
         [instrument_key, tf.label, start, end],
@@ -225,11 +221,16 @@ def _ledger(instrument_key: str, tf: Timeframe, start: date, end: date) -> dict[
 def _record(instrument_key: str, tf: Timeframe, sessions: dict[date, int], checked_on: date) -> None:
     if not sessions:
         return
-    _db().executemany(
-        """INSERT OR REPLACE INTO session_ledger
-           (instrument_key, timeframe, day, bars, checked_on) VALUES (?,?,?,?,?)""",
-        [(instrument_key, tf.label, d, n, checked_on) for d, n in sorted(sessions.items())],
-    )
+    # Its own cursor, closed when done (see store.read for why).
+    cursor = get_db().cursor()
+    try:
+        cursor.executemany(
+            """INSERT OR REPLACE INTO session_ledger
+               (instrument_key, timeframe, day, bars, checked_on) VALUES (?,?,?,?,?)""",
+            [(instrument_key, tf.label, d, n, checked_on) for d, n in sorted(sessions.items())],
+        )
+    finally:
+        cursor.close()
 
 
 def forget(instrument_key: str, timeframe: str | None = None) -> None:
@@ -239,7 +240,7 @@ def forget(instrument_key: str, timeframe: str | None = None) -> None:
     if timeframe:
         q += " AND timeframe = ?"
         params.append(timeframe)
-    _db().execute(q, params)
+    store.write(q, params)
 
 
 # ---------------------------------------------------------------------------

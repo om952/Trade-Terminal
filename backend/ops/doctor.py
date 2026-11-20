@@ -91,7 +91,7 @@ def _app_db() -> Check:
 
 def _market_store() -> tuple[Check, Check, Check]:
     from backend.data import instruments as inst
-    from backend.data.store import all_coverage, get_db
+    from backend.data.store import all_coverage, get_db, read
 
     try:
         get_db()
@@ -104,8 +104,7 @@ def _market_store() -> tuple[Check, Check, Check]:
     store = Check("market data store", OK, str(settings.db_path))
     try:
         count = inst.count()
-        row = get_db().cursor().execute(
-            "SELECT value FROM meta WHERE key = 'instruments_synced_at'").fetchone()
+        row = read("SELECT value FROM meta WHERE key = 'instruments_synced_at'").fetchone()
         if count == 0:
             master = Check("instrument master", WARN, "not synced; stock symbols cannot be resolved. "
                            "Run: trade-terminal sync-instruments")
