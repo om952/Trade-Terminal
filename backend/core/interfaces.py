@@ -75,6 +75,10 @@ class Order:
     trigger_price: Decimal | None = None  # required for SL / SL_M
     strategy_id: str | None = None
     leg_id: str | None = None
+    # Simulators only: the market price this order meets. A real broker ignores
+    # it; the simulated one fills at it plus slippage, never beyond `price` for
+    # a LIMIT or SL order (backend/execution/orders.py).
+    reference_price: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

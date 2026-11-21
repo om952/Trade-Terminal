@@ -208,7 +208,14 @@ def compute(prepared: Prepared, *, on_progress: Progress | None = None) -> dict[
         "costs": cost_context(segment, req.lot_size, df),
         "blocked_reasons": blocked_summary(result),
         "holdout": prepared.holdout,
+        # The orders live trading would send (backend/execution/orders.py).
+        "execution": {"orders": fill_model.orders, "limit_band_bps": fill_model.limit_band_bps,
+                      "stop_limit_band_bps": fill_model.stop_limit_band_bps,
+                      "unfilled_stops": result.unfilled_stops},
     }
+    if result.unfilled_stops:
+        warnings.append(f"{result.unfilled_stops} stop(s) gapped past their stop-limit, were not filled, "
+                        "and exited at the next bar's open instead.")
 
     if req.include_chart:
         payload["chart"] = chart_payload(strategy, df, result)
