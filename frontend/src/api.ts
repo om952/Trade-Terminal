@@ -243,7 +243,10 @@ export interface LiveSnapshot {
   open_positions: LivePosition[];
   trades: Trade[];
   feed: FeedStatus;
-  risk: { halted: boolean; reason: string };
+  risk: { halted: boolean; reason: string; day_pnl?: number };
+  /** The pre-trade checks in front of the broker (backend/execution/pretrade.py). */
+  pretrade?: { tripped: boolean; trip_reason: string; orders_today: number;
+    rejections: { when: string; client_tag: string; symbol: string; reason: string }[] };
   blocked: Record<string, number>;
   reconciled: boolean;
   warnings: string[];

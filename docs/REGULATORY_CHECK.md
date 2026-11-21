@@ -116,16 +116,16 @@ Two checks either way: confirm with Upstox that a VPS or tunnel egress IP is acc
 
 Upstox runs its own checks regardless. Trade Terminal should implement those that apply to it, as P5.2:
 
-| NSE check (para 11.1) | In Trade Terminal |
+| NSE check (para 11.1) | In Trade Terminal (status as of P5.2, 21 Nov 2026) |
 |---|---|
-| 1 Price check (price bands) | Reject a limit price outside the day's band; fetch bands before the open. |
-| 2 Quantity check (freeze limits) | Slice above the exchange freeze quantity in our own code; the limits come from the instrument master (to verify, as the plan says). |
-| 3 Order value check | Maximum notional per order (already in P5.2). |
-| 4–5 Trade and market price protection | No market orders; a limit price within a set percentage of the last price (the "fat-finger" band in P5.2). |
-| 6 Cumulative open order value | Total value of unfilled orders capped per account. |
-| 7 Automated execution check | "Algo shall account for all executed, unexecuted, and unconfirmed orders … before releasing further orders" and stop automatically on "a loop or a runaway situation". This is the reconciliation in P5.1 plus a runaway stop: halt on repeated rejects, on the rate limiter tripping, or on order count far above plan. |
-| 8, 11–15 Margin, position, trading, exposure, turnover and per-security limits | Account kill switch on mark-to-market (P5.2), maximum positions, per-instrument caps. |
-| 10 Market-wide position limit | Don't open new F&O positions in stocks in the F&O ban period; check the daily ban list. |
+| 1 Price check (price bands) | Reject a limit price outside the day's band; fetch bands before the open. *Fat-finger band done; exchange bands with P5.1.* |
+| 2 Quantity check (freeze limits) | Slice above the exchange freeze quantity in our own code; the limits come from the instrument master (to verify, as the plan says). *Refusal done; data and slicing with P5.1.* |
+| 3 Order value check | Maximum notional per order. *Done (MAX_ORDER_NOTIONAL, required for live).* |
+| 4–5 Trade and market price protection | No market orders; a limit price within a set percentage of the last price. *Done (P5.0 and P5.2).* |
+| 6 Cumulative open order value | Total value of unfilled orders capped per account. *With P5.1, when orders rest at the broker.* |
+| 7 Automated execution check | "Algo shall account for all executed, unexecuted, and unconfirmed orders … before releasing further orders" and stop automatically on "a loop or a runaway situation". This is the reconciliation in P5.1 plus a runaway stop: halt on repeated rejects, on the rate limiter tripping, or on order count far above plan. *Runaway stop done; broker reconciliation with P5.1.* |
+| 8, 11–15 Margin, position, trading, exposure, turnover and per-security limits | Account kill switch on mark-to-market, maximum positions, per-order caps. *Done (P5.2).* |
+| 10 Market-wide position limit | Don't open new F&O positions in stocks in the F&O ban period; check the daily ban list. *Done: NSE's daily list, fail closed.* |
 | 9, 16 | Apply to foreign investors and commodities; not applicable. |
 
 ## 7. Login and sessions

@@ -242,7 +242,24 @@ Goal, from the source plan: describe a strategy in English, get a validated spec
     - A limit that the market runs away from within a bar always fills, because OHLC bars cannot show the order book.
 
 - **P5.1 `UpstoxBroker`.** LIMIT and SL orders only, never MARKET or SL-M (P5.0 settles them in simulation). Every order call (place, modify, cancel) through one limiter at 5 per second with at least 150 ms spacing, plus Upstox's 500 per minute and 2,000 per 30 minutes; a rebalance is paced, not burst. Place, modify, cancel; order updates over the portfolio stream; partial fills and rejects; product type; freeze-quantity slicing for index options (verify the current limits). Idempotency through the client tag (verify Upstox's tag length and uniqueness rules). Reconcile against the broker's positions and orders at start and after every reconnect, and refuse to trade on a mismatch.
-- **P5.2 Account kill switch on mark-to-market.** Change [risk.py:170](backend/strategy/risk.py:170) and [risk.py:219](backend/strategy/risk.py:219) to count unrealized loss, with tests, plus max order size and notional, a fat-finger price band, an order-rate cap under 10 per second, and a server-side flatten-all. Cover the NSE pre-trade checks that apply to a self-built algo (NSE/INVG/69255 para 11.1, mapped in the regulatory check, section 6): price band, freeze quantity, order value, cumulative open order value, a runaway stop that accounts for every unconfirmed order before sending more, margin and position limits, and the F&O ban list.
+- **P5.2 Account kill switch and pre-trade checks (done 2026-11-21).**
+  - **Daily limits marked to market:** every daily limit (strategy loss and profit, account loss) is measured on the day's P&L after fees, with open positions at their last price: equity now against equity at the day's start (`Portfolio.day_pnl`). Before, only realized P&L counted, so an open losing position ran past the limit until something closed it. Marks are bar closes; in-bar marks wait for the WebSocket feed (P5.4). The journal carries the day's base, so a restart does not re-base the day. No template sets a daily limit, so template backtests are unchanged.
+  - **Pre-trade guard:** `GuardedBroker` (`backend/execution/pretrade.py`) sits in front of every broker; paper sessions and paper portfolios use it now, and Upstox's broker will in P5.1. It refuses:
+    - market orders;
+    - a limit outside a 5% band of its price, or an SL limit 5% from its trigger (fat finger);
+    - an order above the freeze quantity (the lookup is a hook; the data source comes with P5.1);
+    - opening orders above `MAX_ORDER_QUANTITY` or `MAX_ORDER_NOTIONAL`, now required for live;
+    - new positions in a stock in NSE's F&O ban period (`backend/data/fo_ban.py`, NSE's daily list, cached per day; refused when the list cannot be read).
+
+    Orders that reduce exposure are never refused by a cap.
+  - **Runaway stop:** trips after `MAX_ORDERS_PER_DAY` (200), `MAX_CONSECUTIVE_REJECTS` (5) refusals or broker rejections in a row, or a rate wait over 10 s. After a trip only reducing orders pass; the session stops and flattens.
+  - **Order rate:** at most 5 a second, 150 ms apart, 200 a minute and 2,000 per 30 minutes. Paced on real-time feeds, not on replays.
+  - **Kill switch:** `backend/live/kill_switch.py`, `POST /api/kill-switch/engage`, and "Flatten all" in the app header with a typed FLATTEN confirmation. It records itself first, flattens every paper session on its own thread before its end record, stops every paper portfolio, alerts, and refuses new sessions (409) until a person releases it. The MCP server cannot reach it.
+  - **Live tab:** shows the marked day P&L, a tripped runaway stop and every refused order.
+  - **Not yet:**
+    - the exchange's daily price bands and the freeze-quantity data (P5.1, with the Upstox instrument and quote data);
+    - cumulative open order value (meaningful once orders rest at a real broker, P5.1);
+    - backtests do not apply the account caps or the runaway stop, which are live safety, not modelling.
 - **P5.3 Independent watchdog.** A second process that can flatten positions and cancel orders if the trading process dies or goes silent.
 - **P5.4 WebSocket feed** wired in (the V3 protobuf decoder exists) so a stop can trigger inside a bar; stale-feed detection pauses trading and alerts.
 - **P5.5 Progression.** Paper, then shadow-live (orders generated, not sent, compared with paper), then **1 lot, 1 strategy for 2 weeks**, then scale. The original plan's paper gate stands: at least 20 sessions with drift from the equivalent backtest under an agreed threshold, defined at the start of this phase.

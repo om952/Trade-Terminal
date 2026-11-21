@@ -680,10 +680,12 @@ class PaperSession:
         self.alerts.error(message)
 
     def _finish(self, reason: str) -> None:
-        if reason == "kill_switch":
-            # The kill switch (backend/live/kill_switch.py) always flattens, on
-            # this thread, before the end record: never from another thread.
-            self._flatten("kill switch")
+        if reason in ("kill_switch", "pretrade_tripped"):
+            # The kill switch (backend/live/kill_switch.py) and a tripped pre-trade
+            # runaway stop (backend/execution/pretrade.py) always flatten, on this
+            # thread, before the end record: never from another thread. A tripped
+            # guard still lets orders that reduce exposure through.
+            self._flatten(reason.replace("_", " "))
         elif self.config.flatten_at_session_end and reason in ("feed_exhausted", "session_end"):
             self._flatten("session end")
 

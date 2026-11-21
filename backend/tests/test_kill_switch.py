@@ -176,3 +176,21 @@ def test_an_agent_cannot_reach_the_kill_switch():
     for method in ("GET", "POST"):
         for path in ("/api/kill-switch", "/api/kill-switch/engage", "/api/kill-switch/release"):
             assert not any(m == method and re.fullmatch(p, path) for m, p in ALLOWED), path
+
+
+def test_a_session_stopped_by_a_tripped_pretrade_guard_flattens_first(env, frame):
+    """P5.2: a runaway stop that trips while a position is open closes it before the session ends."""
+    from backend.live.manager import manager
+
+    strategy = templates.load("ema_crossover", symbol=SYMBOL, timeframe="5m")
+    source = PausedReplay(frame, SYMBOL, _holding_point(strategy, frame))
+    session, started = manager.start(_config(strategy), source=source, session_id="trip-1",
+                                     history_frame=frame.iloc[:0])
+    assert started and source.reached.wait(30)
+    assert session.portfolio.has_open_positions
+    manager.stop("trip-1", "pretrade_tripped")          # the reason the session uses when its guard trips
+    assert not session.portfolio.has_open_positions, "the open position was flattened"
+    records = list(J.read(settings.journal_dir / "trip-1.jsonl"))
+    end = [r for r in records if r.type is J.Event.SESSION_END]
+    assert end and end[-1].data["reason"] == "pretrade_tripped"
+    assert max(r.seq for r in records if r.type is J.Event.FILL) < end[-1].seq
