@@ -326,6 +326,14 @@ class StrategyEngine:
         exec_bars = exec_bars or {}
         self._bar_index = index
         self._roll_day_if_needed(ts)
+        # Mark open positions before any limit is checked (P5.2): an option leg
+        # at its contract's close, everything else at this bar's close.
+        marks = {self.symbol: Decimal(str(bar.close))}
+        for leg_id, leg_bar in exec_bars.items():
+            held = self.portfolio.positions.get(leg_id)
+            if held is not None and held.is_open:
+                marks[held.symbol] = Decimal(str(leg_bar.close))
+        self.portfolio.mark_to_market(marks)
 
         intents: list[OrderIntent] = []
         blocked = Block.NONE

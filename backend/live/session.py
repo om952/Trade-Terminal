@@ -343,6 +343,8 @@ class PaperSession:
             )
             portfolio.day_trade_count = int(recovered.portfolio.get("day_trade_count", 0))
             portfolio.day_entry_count = int(recovered.portfolio.get("day_entry_count", 0))
+        portfolio.day_start_equity = recovered.day_start_equity
+        portfolio.marks.update(recovered.marks)
 
         for leg_id, snap in recovered.positions.items():
             position = portfolio.position(leg_id, snap["symbol"], self.config.lot_size)
@@ -596,6 +598,9 @@ class PaperSession:
                 # Carried so a restart can honour a decision made on this bar
                 # whose fill bar had not arrived yet.
                 "pending": [_intent_snapshot(i) for i in self._pending],
+                # So a restart keeps the day's marked-to-market base (P5.2).
+                "day_start_equity": self.portfolio.day_start_equity,
+                "marks": dict(self.portfolio.marks),
             },
         )
         if event.entry_signal or event.exit_signal or event.blocked is not Block.NONE:

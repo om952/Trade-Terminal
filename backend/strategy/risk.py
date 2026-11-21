@@ -6,6 +6,13 @@ Levels, innermost first:
   2. **Strategy** — daily loss cap, trade count, concurrent positions, re-entry.
   3. **Account** — a hard daily loss limit that halts everything.
 
+Every daily limit (strategy loss and profit, account loss) is measured on the
+day's P&L marked to market: equity now against equity at the day's start,
+after fees (`Portfolio.day_pnl`). Counting only realized P&L would let an open
+losing position run past the limit until something closed it, which is the
+situation the limit exists for. Marks are bar closes; a move inside a bar is
+seen at its close (in-bar marks wait for the WebSocket feed, P5.4).
+
 The account level is enforced here, not in the strategy document, and a strategy
 cannot raise it. That asymmetry is the point: strategy limits are a trading
 decision the author makes, the account limit is a survival decision the operator
@@ -145,20 +152,20 @@ class RiskGuard:
             return account
 
         if self.rules.max_loss_per_day is not None:
-            if portfolio.day_realized_pnl <= -Decimal(str(self.rules.max_loss_per_day)):
+            if portfolio.day_pnl <= -Decimal(str(self.rules.max_loss_per_day)):
                 self._halt(Block.DAILY_LOSS)
                 return RiskDecision(
                     False, Block.DAILY_LOSS,
-                    f"day P&L {portfolio.day_realized_pnl} hit strategy limit "
+                    f"day P&L {portfolio.day_pnl:.2f} (marked to market) hit strategy limit "
                     f"-{self.rules.max_loss_per_day}",
                 )
 
         if self.rules.max_profit_per_day is not None:
-            if portfolio.day_realized_pnl >= Decimal(str(self.rules.max_profit_per_day)):
+            if portfolio.day_pnl >= Decimal(str(self.rules.max_profit_per_day)):
                 self._halt(Block.DAILY_PROFIT)
                 return RiskDecision(
                     False, Block.DAILY_PROFIT,
-                    f"day P&L {portfolio.day_realized_pnl} hit profit target "
+                    f"day P&L {portfolio.day_pnl:.2f} (marked to market) hit profit target "
                     f"{self.rules.max_profit_per_day}",
                 )
 
@@ -180,11 +187,11 @@ class RiskGuard:
 
     def _check_account(self, portfolio: Portfolio) -> RiskDecision:
         if self.account_max_daily_loss is not None:
-            if portfolio.day_realized_pnl <= -self.account_max_daily_loss:
+            if portfolio.day_pnl <= -self.account_max_daily_loss:
                 self._halt(Block.ACCOUNT_HALTED)
                 return RiskDecision(
                     False, Block.ACCOUNT_HALTED,
-                    f"ACCOUNT limit breached: day P&L {portfolio.day_realized_pnl} "
+                    f"ACCOUNT limit breached: day P&L {portfolio.day_pnl:.2f} (marked to market) "
                     f"vs -{self.account_max_daily_loss}",
                 )
 
@@ -228,18 +235,17 @@ class RiskGuard:
     def must_flatten(self, portfolio: Portfolio) -> TradeReason | None:
         """Whether open positions must be closed regardless of strategy signals."""
         if self.account_max_daily_loss is not None:
-            total = portfolio.day_realized_pnl
-            if total <= -self.account_max_daily_loss:
+            if portfolio.day_pnl <= -self.account_max_daily_loss:
                 self._halt(Block.ACCOUNT_HALTED)
                 return TradeReason.RISK_LIMIT
 
         if self.rules.max_loss_per_day is not None:
-            if portfolio.day_realized_pnl <= -Decimal(str(self.rules.max_loss_per_day)):
+            if portfolio.day_pnl <= -Decimal(str(self.rules.max_loss_per_day)):
                 self._halt(Block.DAILY_LOSS)
                 return TradeReason.RISK_LIMIT
 
         if self.rules.max_profit_per_day is not None:
-            if portfolio.day_realized_pnl >= Decimal(str(self.rules.max_profit_per_day)):
+            if portfolio.day_pnl >= Decimal(str(self.rules.max_profit_per_day)):
                 self._halt(Block.DAILY_PROFIT)
                 return TradeReason.RISK_LIMIT
 
