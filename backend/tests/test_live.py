@@ -976,3 +976,28 @@ def test_polling_source_does_not_repeat_bars_across_polls(monkeypatch):
     source = sources.RestPollingSource(SYMBOL, "5m", clock=lambda: now)
     assert len(list(source._emit_closed(candles, now))) == 3
     assert list(source._emit_closed(candles, now)) == []      # same poll again
+
+
+def test_a_tripped_pretrade_guard_stops_the_session(frame, tmp_path, monkeypatch):
+    """P5.2: entries refused by an account cap trip the runaway stop, and the session stops."""
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, "max_order_notional", 1.0)          # every entry is too big
+    monkeypatch.setattr(settings, "max_consecutive_rejects", 3)
+    session = _paper(_strategy("ema_crossover"), frame, tmp_path, session_id="gate-pretrade")
+    session.run()
+    assert session.broker.tripped and "refused" in session.broker.trip_reason
+    assert not session.portfolio.closed_trades, "no order got past the cap"
+    assert session.live.stop_reason == "pretrade_tripped"
+    assert any("MAX_ORDER_NOTIONAL" in r["reason"] for r in session.snapshot()["pretrade"]["rejections"])
+
+
+def test_recovery_keeps_the_days_marked_base(frame, tmp_path):
+    """P5.2: the journal carries the day's starting equity, so a restart does not re-base the day."""
+    strategy = _strategy("ema_crossover")
+    session = _paper(strategy, frame.iloc[: len(frame) // 2], tmp_path, session_id="gate-mtm")
+    session.run()
+    recovered = J.recover("gate-mtm", tmp_path)
+    assert recovered.day_start_equity is not None
+    assert recovered.day_start_equity == session.portfolio.day_start_equity
+    assert recovered.marks

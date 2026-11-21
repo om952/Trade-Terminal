@@ -39,8 +39,8 @@ import pandas as pd
 from backend.core.config import IST, Mode, settings
 from backend.core.interfaces import Bar, Order, OrderType, Side
 from backend.execution import orders
-from backend.execution.pretrade import GuardedBroker
 from backend.execution.costs import segment_for
+from backend.execution.pretrade import GuardedBroker
 from backend.indicators.base import PriceBar
 from backend.live import journal as J
 from backend.live.alerts import Alerts
@@ -125,7 +125,8 @@ class PaperSession:
         else:
             limits = PreTradeLimits.from_settings()
             realtime = not isinstance(getattr(feed, "source", None), ReplaySource)
-            self.broker = GuardedBroker(broker, limits, limiter=RateLimiter(limits) if realtime else None)
+            self.broker = GuardedBroker(broker, limits, limiter=RateLimiter(limits) if realtime else None,
+                                        is_banned=self._is_banned)
         self.journal = journal
         self.alerts = alerts or Alerts(enabled=config.alerts_enabled)
 
@@ -198,6 +199,13 @@ class PaperSession:
         )
         sid = session_id or make_session_id(strategy, config.instrument_key)
         return cls(config, feed, broker, J.Journal(sid, journal_dir))
+
+    def _is_banned(self, symbol: str) -> bool | None:
+        """NSE's F&O ban list for the session the order is for (backend/data/fo_ban.py)."""
+        from backend.data import fo_ban
+
+        day = (self._bar_ts or datetime.now(IST)).date()
+        return fo_ban.is_banned(symbol, day)
 
     def _context_referenced(self) -> bool:
         from backend.strategy.schema import CONTEXT_FIELDS
