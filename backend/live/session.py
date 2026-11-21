@@ -39,6 +39,7 @@ import pandas as pd
 from backend.core.config import IST, Mode, settings
 from backend.core.interfaces import Bar, Order, OrderType, Side
 from backend.execution import orders
+from backend.execution.pretrade import GuardedBroker
 from backend.execution.costs import segment_for
 from backend.indicators.base import PriceBar
 from backend.live import journal as J
@@ -107,14 +108,24 @@ class PaperSession:
         self,
         config: SessionConfig,
         feed: LiveFeed,
-        broker: SimulatedBroker,
+        broker: SimulatedBroker | GuardedBroker,
         journal: J.Journal,
         alerts: Alerts | None = None,
         risk: RiskGuard | None = None,
     ) -> None:
         self.config = config
         self.feed = feed
-        self.broker = broker
+        # Every order goes through the pre-trade checks (backend/execution/pretrade.py).
+        # Orders are paced only on a real-time feed; a replay compresses time.
+        from backend.execution.pretrade import PreTradeLimits, RateLimiter
+        from backend.live.sources import ReplaySource
+
+        if isinstance(broker, GuardedBroker):
+            self.broker = broker
+        else:
+            limits = PreTradeLimits.from_settings()
+            realtime = not isinstance(getattr(feed, "source", None), ReplaySource)
+            self.broker = GuardedBroker(broker, limits, limiter=RateLimiter(limits) if realtime else None)
         self.journal = journal
         self.alerts = alerts or Alerts(enabled=config.alerts_enabled)
 
@@ -540,9 +551,18 @@ class PaperSession:
             },
         )
 
-        fill = self.broker.place(order)
+        opening = intent.reason is TradeReason.ENTRY_SIGNAL
+        fill = self.broker.place(order, opening=opening, as_of=self._bar_ts)
         if fill is None:
-            self._note_error(f"order {tag} rejected by broker")
+            refused = self.broker.rejections[-1].reason if self.broker.rejections and \
+                self.broker.rejections[-1].client_tag == tag else "rejected by broker"
+            self._note_error(f"order {tag} not filled: {refused}")
+            if self.broker.tripped:
+                with self._lock:
+                    self.live.stop_reason = "pretrade_tripped"
+                self.alerts.error(f"Pre-trade runaway stop tripped: {self.broker.trip_reason}\n"
+                                  "Stopping the session; positions are flattened.")
+                self.stop("pretrade_tripped")
             return
 
         trade = self.engine.apply_fill(
@@ -768,7 +788,9 @@ class PaperSession:
                 ],
                 "trades": [t.as_dict() for t in portfolio.closed_trades],
                 "feed": self.feed.source.status.as_dict(),
-                "risk": {"halted": self.risk.halted, "reason": self.risk.halt_reason.value},
+                "risk": {"halted": self.risk.halted, "reason": self.risk.halt_reason.value,
+                         "day_pnl": float(self.portfolio.day_pnl)},
+                "pretrade": self.broker.status(),
                 "blocked": dict(self.live.blocked),
                 "reconciled": self.live.reconciled,
                 "warnings": list(self.live.warnings),

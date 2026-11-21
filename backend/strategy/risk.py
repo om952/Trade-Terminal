@@ -288,6 +288,8 @@ class RiskGuard:
             missing.append("MAX_DAILY_LOSS")
         if settings.max_concurrent_positions is None:
             missing.append("MAX_CONCURRENT_POSITIONS")
+        if settings.max_order_notional is None:
+            missing.append("MAX_ORDER_NOTIONAL")
 
         if missing:
             raise RuntimeError(

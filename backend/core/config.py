@@ -95,10 +95,25 @@ class Settings(BaseSettings):
     # --- Risk: account-level kill switch, enforced by the engine.
     # No strategy document can raise these. Empty means "not configured",
     # which the engine treats as a hard block on live mode.
-    max_daily_loss: float | None = None
+    max_daily_loss: float | None = None          # marked to market, after fees (P5.2)
     max_concurrent_positions: int | None = None
+    # Per-order caps on orders that open or add exposure (backend/execution/pretrade.py).
+    max_order_quantity: int | None = None
+    max_order_notional: float | None = None
 
-    @field_validator("max_daily_loss", "max_concurrent_positions", mode="before")
+    # --- Pre-trade checks (P5.2) in front of every broker.
+    order_price_band_pct: float = Field(default=5.0, gt=0, le=20)   # fat-finger band for a limit
+    max_orders_per_day: int = Field(default=200, ge=1, le=5000)     # runaway stop
+    max_consecutive_rejects: int = Field(default=5, ge=1, le=100)   # runaway stop
+    # Kept under NSE's 10 orders per second threshold and Upstox's 500 a minute
+    # and 2,000 per 30 minutes (docs/REGULATORY_CHECK.md section 4).
+    order_rate_per_second: int = Field(default=5, ge=1, le=9)
+    order_min_spacing_ms: int = Field(default=150, ge=100, le=5000)
+    order_rate_per_minute: int = Field(default=200, ge=1, le=500)
+    order_rate_per_30_minutes: int = Field(default=2000, ge=1, le=2000)
+
+    @field_validator("max_daily_loss", "max_concurrent_positions", "max_order_quantity",
+                     "max_order_notional", mode="before")
     @classmethod
     def _blank_is_none(cls, v: object) -> object:
         """A key present but unset in .env means "not configured", not zero.

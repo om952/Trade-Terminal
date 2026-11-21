@@ -226,7 +226,12 @@ def replay(row: dict[str, Any], *, fetch: bool, now: datetime, on_progress=None)
                          "(the warm-up before the start). Download them from the Screener, or connect Upstox.")
     if benchmark and benchmark not in frames:
         raise ValueError(f"The market filter's benchmark {benchmark} has no daily bars.")
-    broker = SimulatedBroker(FillModel(slippage_bps=row["slippage_bps"], segment=Segment.EQUITY_DELIVERY))
+    # Paper, like live, goes through the pre-trade checks (account caps, price band,
+    # runaway stop). Replays are not paced; the order count runs by bar date.
+    from backend.execution.pretrade import GuardedBroker, PreTradeLimits
+
+    broker = GuardedBroker(SimulatedBroker(FillModel(slippage_bps=row["slippage_bps"], segment=Segment.EQUITY_DELIVERY)),
+                           PreTradeLimits.from_settings())
     engine = PortfolioEngine(spec, broker, Decimal(str(row["starting_capital"])), tradable, benchmark,
                              strategy_id=row["id"], trade_from=start)
     engine.run(HistoricalUniverseFeed(frames))
