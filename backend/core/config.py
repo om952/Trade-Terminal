@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # before the open and reports on the previous close.
     scan_alert_times: str = "08:45"
     scan_alerts_enabled: bool = True
+    # When active paper portfolio sessions step to the previous session's
+    # close, IST, comma-separated (the daily bar is served the next morning).
+    portfolio_step_times: str = "08:50"
     # The final holdout (P4.2): the most recent HOLDOUT_MONTHS of real market
     # data, fixed the first time it is used, are kept out of every ordinary
     # backtest; each strategy family may test on them once. 0 turns it off.

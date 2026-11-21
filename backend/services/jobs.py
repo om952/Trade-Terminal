@@ -327,6 +327,12 @@ def run_portfolio_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]
                                      "family_trials", "synthetic_data")} | {"rebalances": out["rebalances"][-12:]}
 
 
+def run_portfolio_step_job(params: dict[str, Any], ctx: JobContext) -> dict[str, Any]:
+    from backend.portfolio import session
+
+    return session.step(params["session_id"], fetch=params.get("fetch", True), on_progress=ctx.progress)
+
+
 # Jobs that can be run again from where they stopped: the cache's ledger skips
 # what is already downloaded, so a rerun is a resume.
 RESUMABLE = {"fetch", "prefetch"}
@@ -341,3 +347,4 @@ runner.register("prefetch", run_prefetch_job)
 runner.register("final_test", run_final_test_job)
 runner.register("validate", run_validate_job)
 runner.register("portfolio", run_portfolio_job)
+runner.register("portfolio_step", run_portfolio_step_job)
