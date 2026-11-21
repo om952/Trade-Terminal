@@ -243,7 +243,10 @@ export interface LiveSnapshot {
   open_positions: LivePosition[];
   trades: Trade[];
   feed: FeedStatus;
-  risk: { halted: boolean; reason: string };
+  risk: { halted: boolean; reason: string; day_pnl?: number };
+  /** The pre-trade checks in front of the broker (backend/execution/pretrade.py). */
+  pretrade?: { tripped: boolean; trip_reason: string; orders_today: number;
+    rejections: { when: string; client_tag: string; symbol: string; reason: string }[] };
   blocked: Record<string, number>;
   reconciled: boolean;
   warnings: string[];
@@ -717,6 +720,22 @@ class ApiError extends Error {
   }
 }
 
+/** The account kill switch (backend/live/kill_switch.py). */
+export interface KillSwitchState {
+  engaged: boolean;
+  engaged_at: string | null;
+  reason: string | null;
+  released_at: string | null;
+}
+
+export interface KillSwitchReport extends KillSwitchState {
+  sessions: { session_id: string; strategy: string; symbol: string; positions_closed: number;
+    still_open: string[]; stopped: boolean }[];
+  portfolios: { id: string; name: string }[];
+  at: string;
+  complete: boolean;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -742,6 +761,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   status: () => request<Status>("/api/status"),
+
+  killSwitch: () => request<KillSwitchState>("/api/kill-switch"),
+
+  engageKillSwitch: (reason: string) =>
+    request<KillSwitchReport>("/api/kill-switch/engage", { method: "POST", body: JSON.stringify({ reason }) }),
+
+  releaseKillSwitch: () => request<KillSwitchState>("/api/kill-switch/release", { method: "POST" }),
 
   indicators: () =>
     request<{ indicators: IndicatorMeta[]; categories: Record<string, string[]> }>(

@@ -203,6 +203,10 @@ class Recovered:
     # decision, and the resumed session behaves differently from one that never
     # crashed — for no reason the trade log would ever reveal.
     pending: list[dict[str, Any]] = field(default_factory=list)
+    # The day's starting equity and the last marks, from the last bar: the daily
+    # limits are marked to market (P5.2), so a restart must not re-base the day.
+    day_start_equity: Decimal | None = None
+    marks: dict[str, Decimal] = field(default_factory=dict)
 
     @property
     def open_legs(self) -> list[str]:
@@ -245,6 +249,10 @@ def recover(session_id: str, directory: Path | None = None) -> Recovered:
             state.last_bar_index = int(data.get("index", state.last_bar_index))
             state.last_bar_time = datetime.fromisoformat(data["t"])
             state.pending = data.get("pending", [])
+            if data.get("day_start_equity") is not None:
+                state.day_start_equity = Decimal(str(data["day_start_equity"]))
+            if data.get("marks"):
+                state.marks = {k: Decimal(str(v)) for k, v in data["marks"].items()}
 
         elif record.type is Event.FILL:
             state.filled_tags.add(data["client_tag"])

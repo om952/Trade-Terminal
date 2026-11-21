@@ -387,8 +387,25 @@ function SessionView({
       {s.risk?.halted && (
         <div className="notice warn">
           <div className="notice-title">Risk limit tripped: {s.risk.reason}</div>
-          No further entries this session. This is sticky until the next day by design.
+          No further entries this session. This is sticky until the next day by design. Daily limits
+          count open positions at their last price, after fees.
         </div>
+      )}
+
+      {s.pretrade?.tripped && (
+        <div className="notice error" role="alert">
+          <div className="notice-title">Runaway stop tripped: {s.pretrade.trip_reason}</div>
+          Only orders that reduce a position were allowed after this; the session stopped and flattened.
+        </div>
+      )}
+
+      {(s.pretrade?.rejections.length ?? 0) > 0 && (
+        <details className="notice warn">
+          <summary className="notice-title">{s.pretrade!.rejections.length} order(s) refused before the broker</summary>
+          {s.pretrade!.rejections.map((r) => (
+            <div key={r.client_tag}><span className="mono">{r.when.slice(11, 19)}</span> {r.symbol}: {r.reason}</div>
+          ))}
+        </details>
       )}
 
       {(s.errors?.length ?? 0) > 0 && (
@@ -412,6 +429,9 @@ function SessionView({
       <div className="metric-grid">
         <Metric label="Net P&L" value={signed(s.net_pnl)} cls={pnlClass} big />
         <Metric label="Equity" value={money(s.equity)} />
+        {s.risk?.day_pnl != null && (
+          <Metric label="Today (marked)" value={signed(s.risk.day_pnl)} cls={s.risk.day_pnl >= 0 ? "up" : "down"} />
+        )}
         <Metric label="Realized" value={signed(s.realized_pnl)} cls={s.realized_pnl >= 0 ? "up" : "down"} />
         <Metric
           label="Unrealized"

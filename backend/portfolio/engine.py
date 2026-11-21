@@ -34,6 +34,7 @@ from typing import Any
 
 from backend.core.interfaces import Bar, Broker, DataFeed, Order, OrderType, Side
 from backend.execution.orders import marketable_limit
+from backend.execution.pretrade import GuardedBroker
 from backend.indicators.base import PriceBar
 from backend.portfolio.spec import PortfolioSpec
 from backend.strategy import conditions
@@ -228,11 +229,17 @@ class PortfolioEngine:
                     continue
             # A marketable limit priced from the open: algo market orders are not
             # allowed (backend/execution/orders.py, docs/REGULATORY_CHECK.md).
-            fill = self.broker.place(Order(
+            sent = Order(
                 client_tag=self._tag(), symbol=order.symbol, side=order.side, quantity=quantity,
                 order_type=OrderType.LIMIT, price=marketable_limit(order.side, bar.open, self.limit_band_bps),
                 strategy_id=self.strategy_id, reference_price=bar.open,
-            ))
+            )
+            # Long only: a buy opens or adds exposure, a sell reduces it. A
+            # guarded broker (backend/execution/pretrade.py) needs to know.
+            if isinstance(self.broker, GuardedBroker):
+                fill = self.broker.place(sent, opening=order.side is Side.BUY, as_of=when)
+            else:
+                fill = self.broker.place(sent)
             if fill is None:
                 self.notes.append(f"{when.date()}: {order.side.value} {order.symbol} was rejected by the broker.")
                 continue

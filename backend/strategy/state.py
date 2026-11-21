@@ -206,6 +206,13 @@ class Portfolio:
     day_trade_count: int = 0
     day_entry_count: int = 0
 
+    # Mark-to-market for the daily loss and profit limits (P5.2). The engine
+    # marks every open position at its latest price on every bar; the day's P&L
+    # is equity now against equity when the day started, after fees, so an open
+    # losing position counts against the limit before it is closed.
+    day_start_equity: Decimal | None = None
+    marks: dict[str, Decimal] = field(default_factory=dict)
+
     def position(self, leg_id: str, symbol: str, lot_size: int = 1) -> Position:
         if leg_id not in self.positions:
             self.positions[leg_id] = Position(symbol=symbol, leg_id=leg_id, lot_size=lot_size)
@@ -239,7 +246,23 @@ class Portfolio:
     def book_fees(self, amount: Decimal) -> None:
         self.fees_paid += amount
 
+    def mark_to_market(self, prices: dict[str, Decimal]) -> None:
+        """Record the latest prices. A symbol without a new price keeps its last one."""
+        self.marks.update(prices)
+
+    @property
+    def marked_equity(self) -> Decimal:
+        return self.equity(self.marks)
+
+    @property
+    def day_pnl(self) -> Decimal:
+        """Net P&L since the day began: realized, plus open positions at their last price, less fees."""
+        start = self.day_start_equity if self.day_start_equity is not None else self.starting_capital
+        return self.marked_equity - start
+
     def start_new_day(self) -> None:
+        # Equity at the last price of the previous day, after every fill that day.
+        self.day_start_equity = self.marked_equity
         self.day_realized_pnl = ZERO
         self.day_trade_count = 0
         self.day_entry_count = 0

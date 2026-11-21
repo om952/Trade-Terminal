@@ -40,6 +40,7 @@ from backend.core.config import IST, Mode, settings
 from backend.core.interfaces import Bar, Order, OrderType, Side
 from backend.execution import orders
 from backend.execution.costs import segment_for
+from backend.execution.pretrade import GuardedBroker
 from backend.indicators.base import PriceBar
 from backend.live import journal as J
 from backend.live.alerts import Alerts
@@ -107,14 +108,25 @@ class PaperSession:
         self,
         config: SessionConfig,
         feed: LiveFeed,
-        broker: SimulatedBroker,
+        broker: SimulatedBroker | GuardedBroker,
         journal: J.Journal,
         alerts: Alerts | None = None,
         risk: RiskGuard | None = None,
     ) -> None:
         self.config = config
         self.feed = feed
-        self.broker = broker
+        # Every order goes through the pre-trade checks (backend/execution/pretrade.py).
+        # Orders are paced only on a real-time feed; a replay compresses time.
+        from backend.execution.pretrade import PreTradeLimits, RateLimiter
+        from backend.live.sources import ReplaySource
+
+        if isinstance(broker, GuardedBroker):
+            self.broker = broker
+        else:
+            limits = PreTradeLimits.from_settings()
+            realtime = not isinstance(getattr(feed, "source", None), ReplaySource)
+            self.broker = GuardedBroker(broker, limits, limiter=RateLimiter(limits) if realtime else None,
+                                        is_banned=self._is_banned)
         self.journal = journal
         self.alerts = alerts or Alerts(enabled=config.alerts_enabled)
 
@@ -187,6 +199,13 @@ class PaperSession:
         )
         sid = session_id or make_session_id(strategy, config.instrument_key)
         return cls(config, feed, broker, J.Journal(sid, journal_dir))
+
+    def _is_banned(self, symbol: str) -> bool | None:
+        """NSE's F&O ban list for the session the order is for (backend/data/fo_ban.py)."""
+        from backend.data import fo_ban
+
+        day = (self._bar_ts or datetime.now(IST)).date()
+        return fo_ban.is_banned(symbol, day)
 
     def _context_referenced(self) -> bool:
         from backend.strategy.schema import CONTEXT_FIELDS
@@ -343,6 +362,8 @@ class PaperSession:
             )
             portfolio.day_trade_count = int(recovered.portfolio.get("day_trade_count", 0))
             portfolio.day_entry_count = int(recovered.portfolio.get("day_entry_count", 0))
+        portfolio.day_start_equity = recovered.day_start_equity
+        portfolio.marks.update(recovered.marks)
 
         for leg_id, snap in recovered.positions.items():
             position = portfolio.position(leg_id, snap["symbol"], self.config.lot_size)
@@ -538,9 +559,18 @@ class PaperSession:
             },
         )
 
-        fill = self.broker.place(order)
+        opening = intent.reason is TradeReason.ENTRY_SIGNAL
+        fill = self.broker.place(order, opening=opening, as_of=self._bar_ts)
         if fill is None:
-            self._note_error(f"order {tag} rejected by broker")
+            refused = self.broker.rejections[-1].reason if self.broker.rejections and \
+                self.broker.rejections[-1].client_tag == tag else "rejected by broker"
+            self._note_error(f"order {tag} not filled: {refused}")
+            if self.broker.tripped:
+                with self._lock:
+                    self.live.stop_reason = "pretrade_tripped"
+                self.alerts.error(f"Pre-trade runaway stop tripped: {self.broker.trip_reason}\n"
+                                  "Stopping the session; positions are flattened.")
+                self.stop("pretrade_tripped")
             return
 
         trade = self.engine.apply_fill(
@@ -596,6 +626,9 @@ class PaperSession:
                 # Carried so a restart can honour a decision made on this bar
                 # whose fill bar had not arrived yet.
                 "pending": [_intent_snapshot(i) for i in self._pending],
+                # So a restart keeps the day's marked-to-market base (P5.2).
+                "day_start_equity": self.portfolio.day_start_equity,
+                "marks": dict(self.portfolio.marks),
             },
         )
         if event.entry_signal or event.exit_signal or event.blocked is not Block.NONE:
@@ -647,7 +680,13 @@ class PaperSession:
         self.alerts.error(message)
 
     def _finish(self, reason: str) -> None:
-        if self.config.flatten_at_session_end and reason in ("feed_exhausted", "session_end"):
+        if reason in ("kill_switch", "pretrade_tripped"):
+            # The kill switch (backend/live/kill_switch.py) and a tripped pre-trade
+            # runaway stop (backend/execution/pretrade.py) always flatten, on this
+            # thread, before the end record: never from another thread. A tripped
+            # guard still lets orders that reduce exposure through.
+            self._flatten(reason.replace("_", " "))
+        elif self.config.flatten_at_session_end and reason in ("feed_exhausted", "session_end"):
             self._flatten("session end")
 
         prices = self._mark_prices()
@@ -763,7 +802,9 @@ class PaperSession:
                 ],
                 "trades": [t.as_dict() for t in portfolio.closed_trades],
                 "feed": self.feed.source.status.as_dict(),
-                "risk": {"halted": self.risk.halted, "reason": self.risk.halt_reason.value},
+                "risk": {"halted": self.risk.halted, "reason": self.risk.halt_reason.value,
+                         "day_pnl": float(self.portfolio.day_pnl)},
+                "pretrade": self.broker.status(),
                 "blocked": dict(self.live.blocked),
                 "reconciled": self.live.reconciled,
                 "warnings": list(self.live.warnings),

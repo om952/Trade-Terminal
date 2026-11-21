@@ -42,7 +42,13 @@ class SessionManager:
         history_frame=None,
         history_before=None,
     ) -> tuple[PaperSession, bool]:
-        """Start a session. Returns (session, started_now)."""
+        """Start a session. Returns (session, started_now).
+
+        Refused while the kill switch is engaged (backend/live/kill_switch.py).
+        """
+        from backend.live.kill_switch import require_released
+
+        require_released()
         sid = session_id or make_session_id(config.strategy, config.instrument_key)
 
         with self._lock:
