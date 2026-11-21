@@ -38,6 +38,7 @@ import pandas as pd
 
 from backend.core.config import IST, Mode, settings
 from backend.core.interfaces import Bar, Order, OrderType, Side
+from backend.execution import orders
 from backend.execution.costs import segment_for
 from backend.indicators.base import PriceBar
 from backend.live import journal as J
@@ -423,7 +424,7 @@ class PaperSession:
 
         # 1. fill what the previous bar decided, at this bar's open
         for intent in self._pending:
-            self._execute(intent, bar.open, OrderType.MARKET)
+            self._execute(intent, orders.at_open(self.fill_model, intent.side, bar.open))
         self._pending = []
 
         # 2. evaluate this bar's close
@@ -433,7 +434,14 @@ class PaperSession:
         deferred: list[OrderIntent] = []
         for intent in event.intents:
             if intent.same_bar and intent.limit_price is not None:
-                self._execute(intent, intent.limit_price, OrderType.SL_M)
+                settled = orders.settle_resting(self.fill_model, intent, price_bar)
+                if isinstance(settled, orders.Order):
+                    self._execute(intent, settled)
+                elif settled is not None:
+                    # Gapped past its stop-limit: unfilled, chased at the next open.
+                    # The deferred order is journaled with the bar's pending orders.
+                    log.info("Stop on %s gapped past its limit; exiting at the next open", intent.leg_id)
+                    deferred.append(settled)
             else:
                 deferred.append(intent)
         self._pending = deferred
@@ -502,18 +510,21 @@ class PaperSession:
             return {}
         return {k: float(v) for k, v in context.iloc[-1].items()}
 
-    def _execute(self, intent: OrderIntent, reference: Decimal, order_type: OrderType) -> None:
+    def _execute(self, intent: OrderIntent, settled: orders.Order) -> None:
         """Route one intent through the broker, then book the fill in the engine."""
         tag = f"{self.journal.session_id}#{intent.bar_index}#{intent.leg_id}#{intent.reason.value}"
+        order_type, reference = settled.order_type, settled.reference
         order = Order(
             client_tag=tag,
             symbol=intent.symbol,
             side=intent.side,
             quantity=intent.quantity,
             order_type=order_type,
-            price=reference,
+            price=settled.limit if settled.limit is not None else reference,
+            trigger_price=settled.trigger,
             strategy_id=self.config.strategy.id,
             leg_id=intent.leg_id,
+            reference_price=reference,
         )
         self.journal.append(
             J.Event.ORDER,
@@ -521,6 +532,7 @@ class PaperSession:
                 "client_tag": tag, "leg_id": intent.leg_id, "symbol": intent.symbol,
                 "side": intent.side.value, "quantity": intent.quantity,
                 "order_type": order_type.value, "reference_price": reference,
+                "limit_price": settled.limit, "trigger_price": settled.trigger,
                 "reason": intent.reason.value, "index": intent.bar_index,
                 "same_bar": intent.same_bar,
             },
@@ -689,7 +701,9 @@ class PaperSession:
                 timestamp=last.timestamp,
             )
             log.info("Flattening %s at %s (%s)", position.leg_id, last.close, why)
-            self._execute(intent, last.close, OrderType.MARKET)
+            self._execute(intent, orders.Order(
+                OrderType.LIMIT, last.close,
+                orders.marketable_limit(intent.side, last.close, self.fill_model.limit_band_bps)))
 
     def _mark_prices(self) -> dict[str, Decimal]:
         last = self.live.last_bar

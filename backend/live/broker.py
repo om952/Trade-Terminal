@@ -28,7 +28,8 @@ from datetime import datetime
 from decimal import Decimal
 
 from backend.core.config import IST
-from backend.core.interfaces import Fill, Order, OrderStatus, Position, Side
+from backend.core.interfaces import Fill, Order, OrderStatus, OrderType, Position, Side
+from backend.execution.orders import capped
 from backend.strategy.runner import FillModel
 
 log = logging.getLogger(__name__)
@@ -85,8 +86,10 @@ class ReconcileReport:
 class SimulatedBroker:
     """Fills at a supplied reference price. Satisfies the `Broker` protocol.
 
-    `Order.price` carries the reference price for every order here, including
-    MARKET ones. In a simulator the price an order fills at is known by the
+    For a MARKET order (kept only for measuring the old model), `Order.price`
+    carries the reference price. For LIMIT and SL orders, the ones live
+    trading sends, `Order.price` is the limit and `Order.reference_price` the
+    market price the order meets; the fill never goes beyond the limit. In a simulator the price an order fills at is known by the
     caller — it is this bar's open, or a stop level inside this bar — and passing
     it explicitly beats hiding it in broker state that the session has to
     remember to update in the right order. A real broker adapter ignores the
@@ -117,7 +120,13 @@ class SimulatedBroker:
             self._rejected.append((order.client_tag, "non-positive quantity"))
             return None
 
-        price = self.fill_model.fill_price(order.side, order.price)
+        if order.order_type in (OrderType.LIMIT, OrderType.SL):
+            # A limit order meets the market at `reference_price` and never
+            # fills beyond its limit (backend/execution/orders.py).
+            reference = order.reference_price if order.reference_price is not None else order.price
+            price = capped(order.side, self.fill_model.fill_price(order.side, reference), order.price)
+        else:
+            price = self.fill_model.fill_price(order.side, order.price)
         fees = self.fill_model.fees(order.side, order.quantity, price)
 
         book = self._books.setdefault(order.symbol, _Book(symbol=order.symbol))

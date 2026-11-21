@@ -451,6 +451,89 @@ def test_gate_daily_timeframe_paper_matches_backtest(daily_frame, tmp_path):
     assert abs(session.portfolio.realized_pnl - expected.portfolio.realized_pnl) < Decimal("0.01")
 
 
+def _gapped(df: pd.DataFrame, seed: int = 11, big: tuple[float, float] = (0.02, 0.04)) -> pd.DataFrame:
+    """Daily bars that open away from the previous close, as real markets do.
+
+    The simulator opens every bar at the previous close, so it can never show
+    a stop gapped through. This moves each open by a few tenths of a percent,
+    and one session in eight by 2 to 4 percent, keeping high and low around it.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    out = df.copy().reset_index(drop=True)
+    jump = rng.normal(0, 0.003, len(out))
+    large = rng.random(len(out)) < 0.125
+    jump[large] = rng.choice([-1, 1], large.sum()) * rng.uniform(big[0], big[1], large.sum())
+    # Each bar keeps its own shape (high, low and close relative to its open) and
+    # moves as a whole with its gap, as a real gapped session does.
+    shape = {c: (out[c] / out["open"]).to_numpy() for c in ("high", "low", "close")}
+    opens, closes = [], []
+    prev = float(out["open"].iloc[0])
+    for i in range(len(out)):
+        o = prev * (1 + jump[i]) if i else prev
+        opens.append(o)
+        prev = o * shape["close"][i]
+        closes.append(prev)
+    o_arr = np.array(opens)
+    out["open"] = o_arr.round(2)
+    out["close"] = np.array(closes).round(2)
+    out["high"] = np.maximum((o_arr * shape["high"]).round(2), np.maximum(out["open"], out["close"]))
+    out["low"] = np.minimum((o_arr * shape["low"]).round(2), np.minimum(out["open"], out["close"]))
+    return out
+
+
+@pytest.mark.parametrize("key", ["bollinger_breakout", "ema_crossover"])
+def test_gate_paper_matches_backtest_when_stops_gap(daily_frame, tmp_path, key):
+    """P5.0: with stop-limit orders, gaps and chased stops, paper still equals the backtest.
+
+    Not vacuous: the data must make at least one stop fill at a gapped open,
+    and the backtest's old market fills must differ from its new limit fills.
+    """
+    strategy = _strategy(key, timeframe="1d")
+    gapped = _gapped(daily_frame)
+
+    expected = _backtest(strategy, gapped)
+    session = _paper(strategy, gapped, tmp_path, session_id=f"gate-gaps-{key}")
+    session.run()
+
+    live = session.portfolio.closed_trades
+    assert len(live) == len(expected.trades) > 0
+    for a, b in zip(live, expected.trades, strict=True):
+        assert (a.entry_time, a.exit_time, a.reason, a.quantity) == (b.entry_time, b.exit_time, b.reason, b.quantity)
+        assert abs(a.exit_price - b.exit_price) < Decimal("1e-6")
+        assert a.fees == b.fees
+    assert abs(session.portfolio.realized_pnl - expected.portfolio.realized_pnl) < Decimal("0.01")
+
+    old = run_backtest(strategy, gapped, starting_capital=Decimal("1000000"), lot_size=250,
+                       fill_model=FillModel(slippage_bps=5.0, segment=_segment(strategy), orders="market"),
+                       risk=RiskGuard(rules=strategy.risk, max_leverage=Decimal("5")), collect_events=False)
+    stops = [(o, n) for o, n in zip(old.trades, expected.trades)
+             if o.reason.value == "stop_loss" and o.exit_time == n.exit_time]
+    assert any(n.exit_price != o.exit_price for o, n in stops) or expected.unfilled_stops, \
+        "the gapped data must exercise a gapped stop"
+
+
+def test_gate_paper_matches_backtest_when_a_stop_gaps_past_its_limit(daily_frame, tmp_path):
+    """A stop that gaps past its stop-limit does not fill; both paths chase it at the next open."""
+    doc = _strategy("bollinger_breakout", timeframe="1d").model_dump(mode="json")
+    for leg in doc["legs"]:
+        leg["stop_loss"] = {"type": "percent", "value": 2.5}
+    strategy = Strategy.model_validate(doc)
+    gapped = _gapped(daily_frame, seed=8, big=(0.04, 0.07))
+
+    expected = _backtest(strategy, gapped)
+    assert expected.unfilled_stops > 0, "the data must gap a stop past its limit"
+    session = _paper(strategy, gapped, tmp_path, session_id="gate-gaps-unfilled")
+    session.run()
+    live = session.portfolio.closed_trades
+    assert [(t.entry_time, t.exit_time, t.reason) for t in live] == \
+        [(t.entry_time, t.exit_time, t.reason) for t in expected.trades]
+    assert abs(session.portfolio.realized_pnl - expected.portfolio.realized_pnl) < Decimal("0.01")
+    chased = [t for t in expected.trades if t.reason.value == "stop_loss" and t.bars_held >= 1]
+    assert chased
+
+
 def test_gate_crash_midway_recovers_to_the_uninterrupted_result(frame, tmp_path):
     """Kill the process mid-session; the resumed run must end where one that never
     crashed would have.

@@ -33,6 +33,7 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from backend.core.interfaces import Bar, Broker, DataFeed, Order, OrderType, Side
+from backend.execution.orders import marketable_limit
 from backend.indicators.base import PriceBar
 from backend.portfolio.spec import PortfolioSpec
 from backend.strategy import conditions
@@ -69,6 +70,7 @@ class PortfolioEngine:
     benchmark: str | None = None
     strategy_id: str = "portfolio"
     trade_from: date | None = None
+    limit_band_bps: float = 100.0      # how far from the open a buy or sell limit may fill
 
     cash: Decimal = field(init=False)
     holdings: dict[str, Holding] = field(default_factory=dict, init=False)
@@ -224,9 +226,12 @@ class PortfolioEngine:
                 quantity = min(quantity, max(affordable, 0))
                 if quantity <= 0:
                     continue
+            # A marketable limit priced from the open: algo market orders are not
+            # allowed (backend/execution/orders.py, docs/REGULATORY_CHECK.md).
             fill = self.broker.place(Order(
                 client_tag=self._tag(), symbol=order.symbol, side=order.side, quantity=quantity,
-                order_type=OrderType.MARKET, price=bar.open, strategy_id=self.strategy_id,
+                order_type=OrderType.LIMIT, price=marketable_limit(order.side, bar.open, self.limit_band_bps),
+                strategy_id=self.strategy_id, reference_price=bar.open,
             ))
             if fill is None:
                 self.notes.append(f"{when.date()}: {order.side.value} {order.symbol} was rejected by the broker.")

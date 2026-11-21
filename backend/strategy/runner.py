@@ -26,7 +26,8 @@ from decimal import Decimal
 
 import pandas as pd
 
-from backend.core.interfaces import Side
+from backend.core.interfaces import OrderType, Side
+from backend.execution import orders
 from backend.execution.costs import CostBreakdown, Segment, compute_costs, segment_for
 from backend.indicators.base import PriceBar
 from backend.strategy.engine import (
@@ -66,6 +67,12 @@ class FillModel:
     slippage_bps: float = 5.0
     segment: Segment = Segment.EQUITY_INTRADAY
     fee_per_order: Decimal | None = None      # set to bypass the real model
+    # The orders live trading sends (backend/execution/orders.py): marketable
+    # limits this far from the price at sending, and stop-limits this far past
+    # the trigger. "market" keeps the old fills, for measuring the difference.
+    orders: str = "limit"
+    limit_band_bps: float = 100.0
+    stop_limit_band_bps: float = 100.0
 
     def fill_price(self, side: Side, price: Decimal) -> Decimal:
         slip = price * Decimal(str(self.slippage_bps)) / Decimal(10_000)
@@ -154,7 +161,8 @@ def run_backtest(
             filled, reference = _prepare_fill(
                 book, intent, index, Decimal(str(bar.open)), opening=True
             )
-            _execute(engine, filled, reference, fills, ts, index, indicators, book)
+            order = orders.at_open(fills, filled.side, reference)
+            _execute(engine, filled, order, fills, ts, index, indicators, book)
         pending = []
 
         # --- 2. evaluate this bar --------------------------------------------
@@ -167,7 +175,12 @@ def run_backtest(
         deferred: list[OrderIntent] = []
         for intent in event.intents:
             if intent.same_bar and intent.limit_price is not None:
-                _execute(engine, intent, intent.limit_price, fills, ts, index, indicators, book)
+                settled = orders.settle_resting(fills, intent, (exec_bars or {}).get(intent.leg_id, bar))
+                if isinstance(settled, orders.Order):
+                    _execute(engine, intent, settled, fills, ts, index, indicators, book)
+                elif settled is not None:
+                    result.unfilled_stops += 1        # gapped past its limit: chased at the next open
+                    deferred.append(settled)
             else:
                 deferred.append(intent)
         pending = deferred
@@ -194,7 +207,9 @@ def run_backtest(
                 timestamp=last_ts,
             )
             filled, reference = _prepare_fill(book, intent, final, last_close)
-            _execute(engine, filled, reference, fills, last_ts, final, indicators, book)
+            order = orders.Order(OrderType.LIMIT, reference,
+                                 orders.marketable_limit(filled.side, reference, fills.limit_band_bps))
+            _execute(engine, filled, order, fills, last_ts, final, indicators, book)
 
     log.info(
         "%s: %d trades, net P&L %.2f over %d bars",
@@ -315,14 +330,14 @@ def context_frame(referenced: set[str], df: pd.DataFrame) -> pd.DataFrame | None
 def _execute(
     engine: StrategyEngine,
     intent: OrderIntent,
-    reference_price: Decimal,
+    order: orders.Order,
     fills: FillModel,
     ts: datetime,
     bar_index: int,
     indicators,
     book: OptionBook | None = None,
 ) -> None:
-    price = fills.fill_price(intent.side, reference_price)
+    price = orders.fill_price(fills, intent.side, order)
     fee = fills.fees(intent.side, intent.quantity, price)
     trade = engine.apply_fill(intent, price, fee, ts, bar_index, indicators)
 

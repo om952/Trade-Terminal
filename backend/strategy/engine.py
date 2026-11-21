@@ -108,6 +108,9 @@ class EngineResult:
     # Set when the strategy has option legs: which contracts were traded and how
     # they were priced. Results are meaningless without it, so it travels with them.
     option_book: object | None = None
+    # Stops that gapped past their stop-limit and were chased at the next open
+    # (backend/execution/orders.py).
+    unfilled_stops: int = 0
 
     @property
     def trades(self) -> list[ClosedTrade]:
