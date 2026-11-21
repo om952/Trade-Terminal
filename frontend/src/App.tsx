@@ -11,6 +11,7 @@ import { ChartTab, PerformanceTab, TradeLogTab } from "./Results";
 import { BLANK_LIVE_CONFIG, LiveDashboard, LivePanel, type LiveConfig } from "./Live";
 import { SweepTable, sweepCount } from "./Sweep";
 import { BLANK_SCAN, ScanResults, ScreenerPanel, useJobPoll } from "./Screener";
+import { KillSwitchBanner, KillSwitchButton, useKillSwitch } from "./KillSwitch";
 import { ValidationView, type RobustnessResult, type ValidateOptions } from "./Validation";
 import { ResearchPanel, ResearchView, openSaved } from "./Research";
 import { BLANK_PORTFOLIO, PortfolioPanel, PortfolioView, usePortfolioRun, type PortfolioRun, type PortfolioRunSettings } from "./Portfolio";
@@ -60,6 +61,8 @@ export default function App() {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The account kill switch, in the header so it is one click from anywhere.
+  const kill = useKillSwitch(setError);
   const [tab, setTab] = useState<Tab>("performance");
   const [panel, setPanel] = useState<Panel>("assistant");
   const [strategyId, setStrategyId] = useState<string | null>(null);
@@ -413,11 +416,13 @@ export default function App() {
               </span>
             </>
           )}
+          <KillSwitchButton kill={kill} />
           <button className="icon-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "Light" : "Dark"}
           </button>
         </div>
       </header>
+      <KillSwitchBanner kill={kill} />
 
       <div className="main">
         <aside className="sidebar">

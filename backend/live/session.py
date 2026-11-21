@@ -680,7 +680,11 @@ class PaperSession:
         self.alerts.error(message)
 
     def _finish(self, reason: str) -> None:
-        if self.config.flatten_at_session_end and reason in ("feed_exhausted", "session_end"):
+        if reason == "kill_switch":
+            # The kill switch (backend/live/kill_switch.py) always flattens, on
+            # this thread, before the end record: never from another thread.
+            self._flatten("kill switch")
+        elif self.config.flatten_at_session_end and reason in ("feed_exhausted", "session_end"):
             self._flatten("session end")
 
         prices = self._mark_prices()

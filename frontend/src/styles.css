@@ -651,3 +651,28 @@ td.down { color: var(--short); }
 .link:hover { color: var(--accent); }
 
 .section-title { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+
+/* ---------- kill switch (backend/live/kill_switch.py) ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-top: 3px solid var(--short);
+  border-radius: 6px;
+  padding: 16px;
+  width: min(440px, 100%);
+  font-size: 13px;
+}
+.modal p { color: var(--ink-2); margin: 6px 0 12px; }
+label.field > span { font-size: 11px; color: var(--muted); }
+.kill-banner { margin: 0; border-radius: 0; border-left-width: 4px; flex-shrink: 0; }

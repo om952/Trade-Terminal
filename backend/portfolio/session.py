@@ -95,10 +95,12 @@ def warmup_days(spec: PortfolioSpec) -> int:
 
 def create(document: dict[str, Any], *, starting_capital: float = 1_000_000, slippage_bps: float = 5.0,
            mode: str = "paper", name: str | None = None, today: date | None = None) -> dict[str, Any]:
+    from backend.live.kill_switch import require_released
     from backend.portfolio.service import validate
     from backend.scan.service import resolve_universe
     from backend.services import backtest
 
+    require_released()
     spec = validate(document)
     if mode != "paper":
         raise ValueError("Live portfolio trading waits for Phase 5's gates (the regulatory check and your "

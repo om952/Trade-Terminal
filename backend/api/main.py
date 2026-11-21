@@ -39,6 +39,7 @@ from backend.data import instruments as inst
 from backend.data.store import all_coverage, write_candles
 from backend.execution.costs import Segment, breakeven_move, round_trip_cost
 from backend.indicators import registry
+from backend.live.kill_switch import KillSwitchEngaged
 from backend.research import service as research
 from backend.scan import service as scan_service
 from backend.services import backtest as backtest_service
@@ -677,6 +678,8 @@ def _portfolio_session_errors():
         raise HTTPException(422, {"errors": exc.errors}) from exc
     except session.NotFound as exc:
         raise HTTPException(404, f"No portfolio session {exc.args[0]!r}") from exc
+    except KillSwitchEngaged:
+        raise                                        # 409, by the handler below
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -724,6 +727,41 @@ def portfolio_session_stop(session_id: str) -> dict:
 
     with _portfolio_session_errors():
         return session.stop(session_id)
+
+
+class KillSwitchRequest(BaseModel):
+    reason: str = Field(default="", max_length=200)
+
+
+@app.exception_handler(KillSwitchEngaged)
+async def _kill_switch_engaged(_request, exc: KillSwitchEngaged):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.get("/api/kill-switch")
+def kill_switch_status() -> dict:
+    """Whether the kill switch is engaged. While it is, no paper session or portfolio can start."""
+    from backend.live import kill_switch
+
+    return kill_switch.status()
+
+
+@app.post("/api/kill-switch/engage")
+def kill_switch_engage(req: KillSwitchRequest | None = None) -> dict:
+    """Flatten and stop every paper session and portfolio, and refuse new ones until released."""
+    from backend.live import kill_switch
+
+    return kill_switch.engage((req.reason if req else "").strip())
+
+
+@app.post("/api/kill-switch/release")
+def kill_switch_release() -> dict:
+    """Allow sessions to start again. A person does this; the MCP server cannot reach it."""
+    from backend.live import kill_switch
+
+    return kill_switch.release()
 
 
 @app.get("/api/holdout")
